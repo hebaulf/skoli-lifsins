@@ -25,7 +25,7 @@ describe("parseEnv", () => {
   });
 
   it("fails when APP_BASE_URL is not a URL", () => {
-    expect(problemsOf({ ...valid, APP_BASE_URL: "not a url" })).toEqual([
+    expect(problemsOf({ ...valid, APP_BASE_URL: "not-a-url" })).toEqual([
       "APP_BASE_URL has an invalid value",
     ]);
   });
@@ -52,6 +52,59 @@ describe("parseEnv", () => {
     expect(problemsOf({ ...valid, BETTER_AUTH_SECRET: "too-short" })).toEqual([
       "BETTER_AUTH_SECRET has an invalid value",
     ]);
+  });
+
+  it.each([
+    ["APP_BASE_URL", "https://example.is/a b"],
+    ["DATABASE_URL", "postgres://u:p@host/db extra"],
+    ["BETTER_AUTH_SECRET", "abcdefghijklmnopqrstuvwxyz012345 6789"],
+    ["RESEND_API_KEY", "re_abc def"],
+    ["EMAIL_FROM", "Skóli lífsins <no-reply@example.is>"],
+    ["SANITY_PROJECT_ID", "abc def"],
+    ["SANITY_DATASET", "demo\n"],
+    ["SANITY_READ_TOKEN", "\tsk-token"],
+    ["NODE_ENV", "production "],
+  ])("rejects whitespace in %s with a single clear message", (key, value) => {
+    expect(problemsOf({ ...valid, [key]: value })).toEqual([`${key} must not contain whitespace`]);
+  });
+
+  it("rejects leading/trailing whitespace instead of trimming it", () => {
+    expect(problemsOf({ ...valid, APP_BASE_URL: " https://example.is" })).toEqual([
+      "APP_BASE_URL must not contain whitespace",
+    ]);
+  });
+
+  it("reports whitespace and other problems together", () => {
+    expect(problemsOf({ NODE_ENV: "production", RESEND_API_KEY: "a b" })).toEqual([
+      "RESEND_API_KEY must not contain whitespace",
+      "APP_BASE_URL is missing",
+    ]);
+  });
+
+  it("accepts EMAIL_FROM as a bare address only", () => {
+    expect(parseEnv({ ...valid, EMAIL_FROM: "no-reply@example.is" }).EMAIL_FROM).toBe(
+      "no-reply@example.is",
+    );
+    expect(problemsOf({ ...valid, EMAIL_FROM: "Skóli<no-reply@example.is>" })).toEqual([
+      "EMAIL_FROM has an invalid value",
+    ]);
+  });
+
+  it("accepts special characters without whitespace", () => {
+    expect(
+      parseEnv({ ...valid, DATABASE_URL: "postgres://u:p%3C%3E@host/db?sslmode=require&x=y" })
+        .DATABASE_URL,
+    ).toBe("postgres://u:p%3C%3E@host/db?sslmode=require&x=y");
+  });
+
+  it("never includes a value with whitespace in the error message", () => {
+    const secret = "sk-very secret-token";
+    try {
+      parseEnv({ ...valid, SANITY_READ_TOKEN: secret });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as Error).message).not.toContain("secret");
+    }
   });
 
   it("never includes the received value in the error message", () => {

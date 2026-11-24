@@ -71,6 +71,11 @@ These go beyond the generic checklist and are where an app like this usually goe
 
 - Dokku builds from the Dockerfile in the repo root and runs the container.
 - **What I can run on the server:** `config:show` and `config:set` for `s14` (over `ssh dokku@vibe.smelltuher.is …`). **Not** port commands (`ports:*`).
+- **Command format (tested on the course server):**
+  - **No flags.** Nothing is accepted before the app name (`--no-restart` and `--encoded` are both denied). Always `config:set s14 KEY=value …`.
+  - **No spaces in any value.** The server splits values on spaces; `config:set` then rejects the whole command ("Invalid env pair") and sets nothing. So every config value must be a single word: e.g. `EMAIL_FROM` is the bare address and the display name lives in code. `src/server/env.ts` rejects whitespace in every variable, so a mistake fails loudly at startup.
+  - **Special characters without spaces are kept as-is** (tested: `a<c>d&e?f=g` was stored unchanged), so URLs with `?`, `&`, `=` and tokens work.
+  - [x] ~~TODO: test how the server handles quoting, spaces and special characters in values~~ Done: results above.
 - Server config is runtime env, set by me from 1Password. Secrets with `op read` (demo field), non-secrets as plain values:
 
   ```sh
@@ -89,8 +94,8 @@ These go beyond the generic checklist and are where an app like this usually goe
 
   Why this form: `&&` skips `ssh` if `op read` fails, `[ -n "$v" ]` skips it if the value came back empty, so the server never gets an empty value; `unset` removes the secret from the shell afterwards (it runs whether or not the `ssh` part ran). The commands contain only `op://` references, so no secret lands in shell history.
 
-- The course server doesn't accept `--no-restart`, so every `config:set` restarts the running app right away with the new value. Set several variables in one `config:set` call where possible, so the app restarts only once. The server output of a `config:set` shows that a restart runs pre-flight checks on the new container before swapping it in and shutting down the old one, so a restart that fails its checks should leave the old container running.
-  - [ ] **TODO (after the first deploy):** verify this once on purpose, e.g. set `APP_BASE_URL` to an invalid value (`not-a-url`), confirm the old container keeps serving https://14.vibe.smelltuher.is/ and the deploy output reports the failed check, then set the correct value again.
+- Because no flags are accepted (so no `--no-restart`), every `config:set` restarts the running app right away with the new value. Set several variables in one `config:set` call where possible, so the app restarts only once. The server output of a `config:set` shows that a restart runs pre-flight checks on the new container before swapping it in and shutting down the old one, and the `app.json` healthcheck on `/api/health` runs on restarts (confirmed: it ran and passed). So a restart that fails its checks should leave the old container running.
+  - [ ] **TODO:** verify the failure case once on purpose, e.g. set `APP_BASE_URL` to an invalid value (`not-a-url`), confirm the old container keeps serving https://14.vibe.smelltuher.is/ and the deploy output reports the failed check, then set the correct value again.
 - Check config with `ssh dokku@vibe.smelltuher.is config:show s14`; note that this prints the values, so don't share its output (and don't paste it into Claude).
 - Currently required on the server: `APP_BASE_URL`. Each later phase below lists what it adds.
 - `PORT` must not be set in Dokku config (it would override `PORT=8080` from the image). Check with `config:show`.
@@ -158,7 +163,7 @@ Set up Better Auth with email + password:
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
-**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts` and uncomment their lines in `env.1password`. `EMAIL_FROM` is not a secret (plain value).
+**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts` and uncomment their lines in `env.1password`. `EMAIL_FROM` is not a secret (plain value) and is the bare address only (no spaces allowed on the server); emails are sent with `formatSender()` from `src/server/email-sender.ts`, which adds the display name "Skóli lífsins".
 
 **1Password (you create before this phase):**
 
@@ -174,7 +179,7 @@ auth_secret="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')" &&
   ssh dokku@vibe.smelltuher.is config:set s14 \
     BETTER_AUTH_SECRET="$auth_secret" \
     RESEND_API_KEY="$resend_key" \
-    EMAIL_FROM="Skóli lífsins <no-reply@<verified-domain>>"; unset auth_secret resend_key
+    EMAIL_FROM=no-reply@<verified-domain>; unset auth_secret resend_key
 ```
 
 ### Phase 4 – Groups and invitations

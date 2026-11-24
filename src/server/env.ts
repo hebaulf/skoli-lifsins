@@ -26,7 +26,7 @@ export const SECRET_ENV_KEYS = [
   "SANITY_READ_TOKEN",
 ] as const;
 
-const nonEmpty = z.string().trim().min(1);
+const nonEmpty = z.string().min(1);
 
 export const envSchema = z
   .object({
@@ -42,7 +42,10 @@ export const envSchema = z
     // Phase 3 – Better Auth + Resend. Make required in Phase 3.
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
     RESEND_API_KEY: nonEmpty.optional(),
-    EMAIL_FROM: nonEmpty.optional(),
+    // Bare address only (e.g. no-reply@example.is). The display name
+    // "Skóli lífsins" lives in code (src/server/email-sender.ts), because the
+    // course Dokku server can't store values containing spaces.
+    EMAIL_FROM: z.email().optional(),
 
     // Phase 5 – Sanity (private dataset, read-only token). Make required in Phase 5.
     SANITY_PROJECT_ID: nonEmpty.optional(),
@@ -74,22 +77,34 @@ export class EnvValidationError extends Error {
   }
 }
 
+const ENV_KEYS = Object.keys(envSchema.shape);
+
 /** Parse and validate an environment object. Throws EnvValidationError. */
 export function parseEnv(source: Record<string, string | undefined>): Env {
+  // No value may contain whitespace: the course Dokku server splits config
+  // values on spaces, and a stray space/newline from copy-paste is always a
+  // mistake. Reject it loudly at startup instead of trimming it silently.
+  const withWhitespace = ENV_KEYS.filter((key) => /\s/.test(source[key] ?? ""));
+
   const result = envSchema.safeParse(source);
-  if (!result.success) {
+  if (!result.success || withWhitespace.length > 0) {
     // Only the variable name and a generic reason – never the received value.
-    const problems = result.error.issues.map((issue) => {
-      const name = issue.path.join(".") || "(root)";
-      const reason =
-        issue.code === "invalid_type" && issue.input === undefined
-          ? "is missing"
-          : issue.code === "custom"
-            ? issue.message
-            : "has an invalid value";
-      return `${name} ${reason}`;
-    });
-    throw new EnvValidationError(problems);
+    const whitespaceProblems = withWhitespace.map((key) => `${key} must not contain whitespace`);
+    const issues = result.success ? [] : result.error.issues;
+    const schemaProblems = issues
+      // One message per variable: whitespace already explains the problem.
+      .filter((issue) => !withWhitespace.includes(String(issue.path[0])))
+      .map((issue) => {
+        const name = issue.path.join(".") || "(root)";
+        const reason =
+          issue.code === "invalid_type" && issue.input === undefined
+            ? "is missing"
+            : issue.code === "custom"
+              ? issue.message
+              : "has an invalid value";
+        return `${name} ${reason}`;
+      });
+    throw new EnvValidationError([...whitespaceProblems, ...schemaProblems]);
   }
   return result.data;
 }
