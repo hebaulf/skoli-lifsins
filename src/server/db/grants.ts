@@ -28,6 +28,13 @@ export const EXPECTED_APP_GRANTS: Readonly<Record<string, readonly TablePrivileg
   diploma: READ_WRITE,
   // The answer key is written only by the seed script (admin connection).
   answer_key: ["SELECT"],
+  // Better Auth (Phase 3)
+  session: READ_WRITE,
+  account: READ_WRITE,
+  verification: READ_WRITE,
+  two_factor: READ_WRITE,
+  // Auth rate limiter (Phase 3)
+  auth_rate_limit: READ_WRITE,
 };
 
 /**

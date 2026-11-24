@@ -15,6 +15,20 @@
       "when": 1795556990104,
       "tag": "0001_app_runtime_role",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795563486700,
+      "tag": "0002_auth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795563487294,
+      "tag": "0003_auth_grants_and_admin_guard",
+      "breakpoints": true
     }
   ]
 }
