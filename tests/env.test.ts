@@ -4,10 +4,16 @@ import { EnvValidationError, parseEnv } from "@/server/env";
 // Fake connection string in the required shape (app role, verify-full).
 const FAKE_DB_URL =
   "postgresql://app_runtime:FakePassw0rdFakePassw0rdFakePassw0rd@db.example.invalid/neondb?sslmode=verify-full";
+const FAKE_AUTH = {
+  BETTER_AUTH_SECRET: "FakeSecretFakeSecretFakeSecretFakeSecret",
+  RESEND_API_KEY: "re_FakeKey",
+  EMAIL_FROM: "onboarding@resend.dev",
+};
 const valid = {
   NODE_ENV: "production",
   APP_BASE_URL: "https://14.vibe.smelltuher.is",
   DATABASE_URL: FAKE_DB_URL,
+  ...FAKE_AUTH,
 };
 
 function problemsOf(source: Record<string, string | undefined>): string[] {
@@ -28,9 +34,9 @@ describe("parseEnv", () => {
   });
 
   it("fails when APP_BASE_URL is missing", () => {
-    expect(problemsOf({ NODE_ENV: "production", DATABASE_URL: FAKE_DB_URL })).toEqual([
-      "APP_BASE_URL is missing",
-    ]);
+    expect(problemsOf({ NODE_ENV: "production", DATABASE_URL: FAKE_DB_URL, ...FAKE_AUTH })).toEqual(
+      ["APP_BASE_URL is missing"],
+    );
   });
 
   it("fails when APP_BASE_URL is not a URL", () => {
@@ -48,6 +54,7 @@ describe("parseEnv", () => {
         NODE_ENV: "development",
         APP_BASE_URL: "http://localhost:3000",
         DATABASE_URL: FAKE_DB_URL,
+        ...FAKE_AUTH,
       }).APP_BASE_URL,
     ).toBe("http://localhost:3000");
   });
@@ -65,6 +72,43 @@ describe("parseEnv", () => {
     expect(problemsOf({ ...valid, BETTER_AUTH_SECRET: "too-short" })).toEqual([
       "BETTER_AUTH_SECRET has an invalid value",
     ]);
+  });
+
+  describe("EMAIL_TRANSPORT", () => {
+    const dev = { ...valid, NODE_ENV: "development", APP_BASE_URL: "http://localhost:3000" };
+    it("defaults to resend and then requires RESEND_API_KEY", () => {
+      expect(parseEnv(valid).EMAIL_TRANSPORT).toBe("resend");
+      expect(problemsOf({ ...valid, RESEND_API_KEY: undefined })).toEqual([
+        "RESEND_API_KEY is required when EMAIL_TRANSPORT=resend",
+      ]);
+    });
+    it("allows console only in development on localhost (no Resend key needed)", () => {
+      expect(
+        parseEnv({ ...dev, EMAIL_TRANSPORT: "console", RESEND_API_KEY: undefined }).EMAIL_TRANSPORT,
+      ).toBe("console");
+    });
+    it("refuses console in production (startup fails)", () => {
+      expect(problemsOf({ ...valid, EMAIL_TRANSPORT: "console" })).toEqual([
+        "EMAIL_TRANSPORT console is only allowed with NODE_ENV=development and a localhost APP_BASE_URL",
+      ]);
+    });
+    it("refuses console in development on a non-local host (misconfigured server)", () => {
+      expect(
+        problemsOf({
+          ...dev,
+          APP_BASE_URL: "https://14.vibe.smelltuher.is",
+          EMAIL_TRANSPORT: "console",
+        }),
+      ).toEqual([
+        "EMAIL_TRANSPORT console is only allowed with NODE_ENV=development and a localhost APP_BASE_URL",
+      ]);
+    });
+    it("refuses console in test mode and unknown transports", () => {
+      expect(problemsOf({ ...dev, NODE_ENV: "test", EMAIL_TRANSPORT: "console" })).toHaveLength(1);
+      expect(problemsOf({ ...valid, EMAIL_TRANSPORT: "smtp" })).toEqual([
+        "EMAIL_TRANSPORT has an invalid value",
+      ]);
+    });
   });
 
   it.each([
@@ -88,7 +132,12 @@ describe("parseEnv", () => {
 
   it("reports whitespace and other problems together", () => {
     expect(
-      problemsOf({ NODE_ENV: "production", DATABASE_URL: FAKE_DB_URL, RESEND_API_KEY: "a b" }),
+      problemsOf({
+        NODE_ENV: "production",
+        DATABASE_URL: FAKE_DB_URL,
+        ...FAKE_AUTH,
+        RESEND_API_KEY: "a b",
+      }),
     ).toEqual(["RESEND_API_KEY must not contain whitespace", "APP_BASE_URL is missing"]);
   });
 

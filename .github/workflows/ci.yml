@@ -143,6 +143,9 @@ jobs:
           docker run -d --name app \
             -e APP_BASE_URL=https://example.invalid \
             -e DATABASE_URL='postgresql://app_runtime:FakePassw0rdFakePassw0rd@db.example.invalid/neondb?sslmode=verify-full' \
+            -e BETTER_AUTH_SECRET=FakeSecretForCiOnlyFakeSecretForCiOnly \
+            -e RESEND_API_KEY=re_FakeKeyForCiOnly \
+            -e EMAIL_FROM=onboarding@resend.dev \
             skoli-lifsins:ci
           for i in $(seq 1 30); do
             status=$(docker inspect -f '{{.State.Health.Status}}' app)

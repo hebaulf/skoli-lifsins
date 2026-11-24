@@ -40,13 +40,19 @@ export const envSchema = z
       }
     }),
 
-    // Phase 3 – Better Auth + Resend. Make required in Phase 3.
-    BETTER_AUTH_SECRET: z.string().min(32).optional(),
+    // Phase 3 – Better Auth. Encrypts TOTP secrets and backup codes: NEVER
+    // rotate it without Better Auth's key-version mechanism (docs/PLAN.md).
+    BETTER_AUTH_SECRET: z.string().min(32),
+
+    // Phase 3 – email. "console" prints emails to the local terminal instead
+    // of sending them; allowed ONLY in local development (checked below).
+    EMAIL_TRANSPORT: z.enum(["resend", "console"]).default("resend"),
+    // Required when EMAIL_TRANSPORT=resend (checked below).
     RESEND_API_KEY: nonEmpty.optional(),
     // Bare address only (e.g. no-reply@example.is). The display name
     // "Skóli lífsins" lives in code (src/server/email-sender.ts), because the
     // course Dokku server can't store values containing spaces.
-    EMAIL_FROM: z.email().optional(),
+    EMAIL_FROM: z.email(),
 
     // Not here on purpose: ADMIN_DATABASE_URL (migrations, db scripts, answer
     // seed). It's only ever passed to those scripts on the developer's machine
@@ -64,6 +70,28 @@ export const envSchema = z
         code: "custom",
         path: ["APP_BASE_URL"],
         message: "must use https in production",
+      });
+    }
+
+    // Console email mode would print verification and reset links to the
+    // logs. Only for local development: NODE_ENV=development AND a localhost
+    // base URL (a misconfigured server with NODE_ENV=development still fails).
+    if (env.EMAIL_TRANSPORT === "console") {
+      const host = URL.canParse(env.APP_BASE_URL) ? new URL(env.APP_BASE_URL).hostname : "";
+      const local = ["localhost", "127.0.0.1", "[::1]"].includes(host);
+      if (env.NODE_ENV !== "development" || !local) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["EMAIL_TRANSPORT"],
+          message: "console is only allowed with NODE_ENV=development and a localhost APP_BASE_URL",
+        });
+      }
+    }
+    if (env.EMAIL_TRANSPORT === "resend" && !env.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["RESEND_API_KEY"],
+        message: "is required when EMAIL_TRANSPORT=resend",
       });
     }
   });
