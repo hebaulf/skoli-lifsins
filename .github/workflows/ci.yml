@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: jobs can only read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to full commit SHAs (Dependabot updates them).
+# Scanners run as their official container images pinned by version + digest.
+# NOTE: Dependabot does not update the scanner image digests below; bump them
+# by hand (check release date >= 7 days, matching our pnpm release-age gate).
+env:
+  SEMGREP_IMAGE: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+
+jobs:
+  checks:
+    name: Typecheck, lint, test, audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Enable pnpm (version from package.json via Corepack)
+        run: corepack enable
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - name: Dependency audit (fail on high/critical)
+        run: pnpm audit --audit-level high
+
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Semgrep scan
+        run: >
+          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE"
+          semgrep scan --config p/default --config p/typescript --config p/react
+          --error --metrics=off --exclude tests
+
+  gitleaks:
+    name: Gitleaks (secrets in full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Gitleaks scan
+        run: >
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE"
+          git /repo --redact --verbose --exit-code 1
+
+  docker:
+    name: Docker build, smoke test, Trivy scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t skoli-lifsins:ci .
+      - name: Image must not contain env files, tests or source maps
+        run: |
+          found=$(docker run --rm --entrypoint sh skoli-lifsins:ci -c \
+            "find /app \( -name '.env*' -o -name '*.test.ts' -o -name '*.map' -o -name '.git' \) 2>/dev/null")
+          if [ -n "$found" ]; then echo "Unexpected files in image:"; echo "$found"; exit 1; fi
+      - name: Container runs as non-root
+        run: test "$(docker run --rm --entrypoint id skoli-lifsins:ci -u)" != "0"
+      - name: Container exits when a required variable is missing
+        run: |
+          set +e
+          timeout 30 docker run --rm skoli-lifsins:ci
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ] || [ "$code" -eq 124 ]; then
+            echo "Expected the container to exit with an error (got $code)"; exit 1
+          fi
+      - name: Container becomes healthy with required variables set
+        run: |
+          docker run -d --name app -e APP_BASE_URL=https://example.invalid skoli-lifsins:ci
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            echo "health: $status"
+            [ "$status" = "healthy" ] && exit 0
+            sleep 2
+          done
+          docker logs app
+          exit 1
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        run: >
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE"
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 --no-progress skoli-lifsins:ci

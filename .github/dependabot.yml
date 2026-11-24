@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # npm packages (pnpm lockfile). Security updates are opened regardless of
+  # the schedule. Each PR still goes through CI and human review; the pnpm
+  # 7-day release-age gate does not apply to versions Dependabot picks, so the
+  # cooldown below gives the same protection.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    groups:
+      next-react:
+        patterns: ["next", "eslint-config-next", "react", "react-dom", "@types/react*"]
+      dev-tooling:
+        dependency-type: development
+        exclude-patterns: ["eslint-config-next", "@types/react*"]
+
+  # GitHub Actions pinned by commit SHA in .github/workflows/
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # Base image digest in the Dockerfile
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # Stay on the Node 24 LTS line; major upgrades are a deliberate change.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
