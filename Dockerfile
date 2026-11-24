@@ -21,7 +21,9 @@ FROM base AS build
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm build
+# Next.js emits source maps for server bundles; they're not needed at runtime
+# and must not ship in the image, so delete them right after the build.
+RUN pnpm build && find .next/standalone .next/static -name '*.map' -delete
 
 # ---- 3. Runtime: only the standalone output ----
 FROM base AS runner
