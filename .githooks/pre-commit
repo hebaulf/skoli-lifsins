@@ -1,0 +1,25 @@
+#!/bin/sh
+# Versioned pre-commit hook. Installed by `pnpm install` (the "prepare" script
+# sets `git config core.hooksPath .githooks`).
+#
+# Blocks secrets and answer-key files before they can reach the PUBLIC repo,
+# using the repo's .gitleaks.toml. Never bypass it (no --no-verify / -n).
+set -eu
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed, so this commit can't be checked." >&2
+  echo "  Install it (macOS: brew install gitleaks) and commit again." >&2
+  echo "  This hook keeps secrets and answer-key files out of the public repo." >&2
+  exit 1
+fi
+
+if [ ! -f .gitleaks.toml ]; then
+  echo "pre-commit: .gitleaks.toml is missing; refusing to commit without the answer-key rules." >&2
+  exit 1
+fi
+
+gitleaks git --pre-commit --staged --config .gitleaks.toml --verbose
+
+# gitleaks skips .gitleaks.toml itself, so the marker's allowed lines are also
+# checked here, for every staged file.
+sh scripts/check-canary-lines.sh

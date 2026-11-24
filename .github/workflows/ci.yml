@@ -72,7 +72,7 @@ jobs:
       - name: Gitleaks scan
         run: >
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE"
-          git /repo --redact --verbose --exit-code 1
+          git /repo --config /repo/.gitleaks.toml --redact --verbose --exit-code 1
 
   answer-files:
     name: No answer-key files (tree and full history)
@@ -87,6 +87,8 @@ jobs:
         run: sh scripts/check-no-answer-files.sh
       - name: Full git history (the repo is public, so deleted files still count)
         run: sh scripts/check-no-answer-files.sh --history
+      - name: Canary marker only on its allowed lines
+        run: sh scripts/check-canary-lines.sh
 
   docker:
     name: Docker build, smoke test, Trivy scan

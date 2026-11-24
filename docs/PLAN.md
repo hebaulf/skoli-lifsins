@@ -39,7 +39,7 @@ Keep Next.js and React patched promptly; both had serious vulnerabilities in 202
 These go beyond the generic checklist and are where an app like this usually goes wrong.
 
 - **Quiz integrity.** Grading, the 75% unlock and diploma eligibility are computed only on the server. Correct answers never reach the browser. The server refuses to show a locked chapter or accept answers for it.
-- **Answer key (public repo).** The GitHub repo is public, so correct answers and explanations are never committed (not in content, tests, fixtures, docs or commit messages). They live only in Neon's answer key table, loaded with a seed script from a JSON file outside the repo, using a separate admin connection; the app's runtime database user can only `SELECT` from that table. Chapters with an incomplete answer key can't be taken (fail closed). Explanations are returned only after an attempt is graded. Safety nets: `.gitignore` patterns and a CI check for answer files. See Phase 5.
+- **Answer key (public repo).** The GitHub repo is public, so correct answers and explanations are never committed (not in content, tests, fixtures, docs or commit messages). They live only in Neon's answer key table, loaded with a seed script from a JSON file outside the repo, using a separate admin connection; the app's runtime database user can only `SELECT` from that table. Chapters with an incomplete answer key can't be taken (fail closed). Explanations are returned only after an attempt is graded. Safety nets: a canary marker in every answer file blocked locally by the gitleaks pre-commit hook, strict content schemas, `.gitignore` patterns and CI checks. If real answers are ever pushed, deleting them doesn't help on a public repo; the affected questions and answers must be changed. See Phase 5.
 - **Access control (OWASP A01).** A teacher sees only students in groups they own. A student sees only their own data. Admin sees everything. Enforced in the data access layer (`src/server/dal/`) on every call, not in middleware or the UI. Requests for someone else's data return 404, so ids can't be probed.
 - **Roles.** Never taken from client input. Sign-up path decides student vs teacher on the server. No code path creates an admin except the seed script.
 - **Teacher accounts.** Open teacher sign-up means anyone can create groups and send invite emails from our domain. Options: open sign-up, admin approval, or allowed email domains. **Open decision**, see section 6.
@@ -66,7 +66,9 @@ These go beyond the generic checklist and are where an app like this usually goe
 ### Guardrails already in place
 
 - GitHub: 2FA on account, Dependabot alerts and security updates, secret scanning + push protection and CodeQL (if the repo is public), ruleset on `main` blocking force pushes and deletion. Add "require status checks" once CI exists.
-- gitleaks pre-commit hook (local, in `.git/hooks/pre-commit`).
+- **Versioned pre-commit hook** in `.githooks/pre-commit` (committed). It runs gitleaks on the staged changes with the repo's `.gitleaks.toml`, then `scripts/check-canary-lines.sh`. It fails with a clear message if gitleaks isn't installed or `.gitleaks.toml` is missing.
+  - **Install:** install gitleaks (macOS: `brew install gitleaks`), then run `pnpm install` in the repo. The `prepare` script sets `git config core.hooksPath .githooks`. It does nothing when there's no `.git` (Docker build) or when `CI` is set. Check with `git config --get core.hooksPath` (should print `.githooks`).
+  - Every clone needs this once. Never bypass the hook (`git commit --no-verify` / `-n`); CI is only the second layer and runs after the push.
 - `.claude/settings.json` denies reading `.env*`, `git push`, `ssh`, `curl`, `wget`, `op`.
 
 ### Dokku notes
@@ -214,6 +216,7 @@ Content in the repo:
 
 Answer key in Neon (table from Phase 2: question id, correct option id, explanation):
 - A seed script, `pnpm seed:answers <path>`, reads a JSON answer file from OUTSIDE the repo (refuse a path inside the repo)
+- It validates the file with answerFileSchema from src/server/content/answer-file.ts (already exists): strict, and the "_canary" field must equal the fixed marker; files without it are refused
 - It validates the file with Zod against the content: every question has exactly one answer, every option id exists for its question, no unknown question ids
 - It upserts everything in one transaction (all or nothing)
 - It prints only counts (e.g. chapters, questions, inserted/updated), never answers or explanations
@@ -228,7 +231,33 @@ Rules:
 Verify by checking the built client bundle and network responses that no correct answers or explanations (before grading) reach the browser, and show me how you checked.
 ```
 
-**Already in place (added before this phase):** `.gitignore`/`.dockerignore` patterns and `scripts/check-no-answer-files.sh`, run by the `answer-files` CI job on the current tree and the full git history. They match data files (`json`, `csv`, `tsv`, `yaml`, `yml`, `txt`, `xlsx`) whose name contains "answer", "svor" or "svör", case-insensitively; code files like `answer-key.ts` are allowed. So fake test fixtures must be TypeScript, not JSON.
+**Already in place (added before this phase):**
+
+- `src/server/content/schema.ts`: strict Zod schemas for content (unknown keys like `correct`, `isCorrect`, `answer`, `explanation` are rejected), with tests.
+- `src/server/content/answer-file.ts`: the answer file schema (strict, required canary), with tests.
+- Layer 1, local and content-based (prevents the push): `.gitleaks.toml` extends the default gitleaks rules with a rule that blocks the canary marker in any file and a rule for answer-file names. The versioned pre-commit hook (`.githooks/pre-commit`, see section 4) runs it on the staged changes, so a commit containing an answer file is refused before it can be pushed. The marker is allowed on exactly three lines, matched by path AND line: the `regex = ...` line in `.gitleaks.toml`, the `export const ANSWER_FILE_CANARY = ...` line in `src/server/content/answer-file.ts`, and the `"_canary": ...` line of the example below. It's blocked anywhere else, including other lines of those files. gitleaks skips its own `.gitleaks.toml`, so the hook also runs `scripts/check-canary-lines.sh`, which checks every staged line containing the marker against those three exact lines.
+- Layer 2, in CI (detects, after the push): the gitleaks job uses the same config on the full history, and the `answer-files` job runs `scripts/check-no-answer-files.sh` (tree and full history) and `scripts/check-canary-lines.sh`.
+- `.gitignore`/`.dockerignore` patterns. The name patterns match data files (`json`, `csv`, `tsv`, `yaml`, `yml`, `txt`, `xlsx`) whose name contains "answer", "svor" or "svör", case-insensitively; code files like `answer-key.ts` are allowed. So fake test fixtures must be TypeScript, and they import the canary constant instead of writing it out.
+
+**Answer file format** (all ids must exist in the content; example values are fake):
+
+```json
+{
+  "_canary": "SKOLI-ANSWER-KEY-DO-NOT-COMMIT",
+  "answers": [
+    {
+      "questionId": "ch01-q1",
+      "correctOptionId": "ch01-q1-b",
+      "explanation": "Why b is correct (shown only after grading)."
+    }
+  ]
+}
+```
+
+- `_canary` (required): exactly the value in the example above (`ANSWER_FILE_CANARY` in `src/server/content/answer-file.ts`). Not a secret, only a marker; it lets gitleaks recognise the file by content, whatever it's named. Keep it in every copy and export of the file.
+- `answers`: one entry per question; no other keys are allowed (strict).
+
+**If real answers are ever pushed** (incident): on a public repo, deleting the file or rewriting history doesn't help. Forks, clones, caches and archives may already have it. Treat every affected question as compromised: change the questions, options and correct answers (new ids), re-seed the answer key, and record what happened. Then find out why both layers missed it and fix that.
 
 **Note:** the real course texts are committed only once the organisation confirms they may be public (open decision, section 6). Until then the repo has placeholder content only.
 

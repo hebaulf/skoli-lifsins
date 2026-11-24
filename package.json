@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "if [ -e .git ] && [ -z \"${CI:-}\" ]; then git config core.hooksPath .githooks; fi"
   },
   "dependencies": {
     "next": "^16.4.6",

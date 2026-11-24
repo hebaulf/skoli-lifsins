@@ -1,0 +1,61 @@
+# gitleaks configuration, used by the local pre-commit hook
+# (`gitleaks git --pre-commit --staged`, which loads this file from the repo
+# root) and by the CI gitleaks job (`--config /repo/.gitleaks.toml`).
+#
+# The repo is PUBLIC. Besides the default secret rules, it blocks answer-key
+# files: correct answers and explanations live only in Neon (docs/PLAN.md,
+# Phase 5). Never add allowlist entries here to get an answer file through.
+
+title = "skoli-lifsins"
+
+[extend]
+# Keep all of gitleaks' built-in secret rules.
+useDefault = true
+
+# Content-based: every answer file contains this marker (required by the
+# seed script's schema), so any file carrying it is blocked, whatever its name.
+[[rules]]
+id = "skoli-answer-key-canary"
+description = "Answer-key file (canary marker) must never be committed to the public repo"
+regex = '''SKOLI-ANSWER-KEY-DO-NOT-COMMIT'''
+keywords = ["skoli-answer-key-do-not-commit"]
+
+  # Allowed only on three exact LINES (path AND line must match); the marker
+  # anywhere else, including other lines of these files, is blocked.
+  # The line patterns deliberately don't contain the marker themselves.
+  # `(?m)` is needed: the "line" gitleaks checks includes the preceding newline,
+  # so `^` and `$` must match at line breaks. `\+?` tolerates a diff "+" prefix.
+
+  # 1. The rule's own `regex = ...` line in this file. NOTE: gitleaks' default
+  #    config skips files named .gitleaks.toml entirely, so this entry is
+  #    currently moot; scripts/check-canary-lines.sh (pre-commit hook + CI)
+  #    enforces the allowed lines for every file, including this one.
+  [[rules.allowlists]]
+  description = "Canary rule definition in .gitleaks.toml"
+  condition = "AND"
+  paths = ['''^\.gitleaks\.toml$''']
+  regexTarget = "line"
+  regexes = ['''(?m)^\+?regex = '{3}[A-Z-]+'{3}$''']
+
+  # 2. The single code line that defines the constant.
+  [[rules.allowlists]]
+  description = "ANSWER_FILE_CANARY constant definition"
+  condition = "AND"
+  paths = ['''^src/server/content/answer-file\.ts$''']
+  regexTarget = "line"
+  regexes = ['''(?m)^\+?export const ANSWER_FILE_CANARY = "[A-Z-]+";$''']
+
+  # 3. The `"_canary": ...` line of the JSON example in the docs.
+  [[rules.allowlists]]
+  description = "Answer file format example in docs/PLAN.md"
+  condition = "AND"
+  paths = ['''^docs/PLAN\.md$''']
+  regexTarget = "line"
+  regexes = ['''(?m)^\+?\s*"_canary": "[A-Z-]+",?$''']
+
+# Name-based: same patterns as scripts/check-no-answer-files.sh (data files
+# named like answer/svor/svör, any case). A path-only rule matches by filename.
+[[rules]]
+id = "skoli-answer-key-filename"
+description = "File named like an answer-key data file must never be committed to the public repo"
+path = '''(?i)(^|/)[^/]*(answer|svor|svör)[^/]*\.(json|csv|tsv|ya?ml|txt|xlsx)$'''
