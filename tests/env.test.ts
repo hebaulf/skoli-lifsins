@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { EnvValidationError, parseEnv } from "@/server/env";
 
-const valid = { NODE_ENV: "production", APP_BASE_URL: "https://14.vibe.smelltuher.is" };
+// Fake connection string in the required shape (app role, verify-full).
+const FAKE_DB_URL =
+  "postgresql://app_runtime:FakePassw0rdFakePassw0rdFakePassw0rd@db.example.invalid/neondb?sslmode=verify-full";
+const valid = {
+  NODE_ENV: "production",
+  APP_BASE_URL: "https://14.vibe.smelltuher.is",
+  DATABASE_URL: FAKE_DB_URL,
+};
 
 function problemsOf(source: Record<string, string | undefined>): string[] {
   try {
@@ -17,11 +24,13 @@ describe("parseEnv", () => {
   it("accepts a minimal valid production environment", () => {
     const env = parseEnv(valid);
     expect(env.APP_BASE_URL).toBe("https://14.vibe.smelltuher.is");
-    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.DATABASE_URL).toBe(FAKE_DB_URL);
   });
 
   it("fails when APP_BASE_URL is missing", () => {
-    expect(problemsOf({ NODE_ENV: "production" })).toEqual(["APP_BASE_URL is missing"]);
+    expect(problemsOf({ NODE_ENV: "production", DATABASE_URL: FAKE_DB_URL })).toEqual([
+      "APP_BASE_URL is missing",
+    ]);
   });
 
   it("fails when APP_BASE_URL is not a URL", () => {
@@ -35,7 +44,11 @@ describe("parseEnv", () => {
       "APP_BASE_URL must use https in production",
     ]);
     expect(
-      parseEnv({ NODE_ENV: "development", APP_BASE_URL: "http://localhost:3000" }).APP_BASE_URL,
+      parseEnv({
+        NODE_ENV: "development",
+        APP_BASE_URL: "http://localhost:3000",
+        DATABASE_URL: FAKE_DB_URL,
+      }).APP_BASE_URL,
     ).toBe("http://localhost:3000");
   });
 
@@ -46,9 +59,9 @@ describe("parseEnv", () => {
   });
 
   it("validates optional variables when they are set", () => {
-    expect(problemsOf({ ...valid, DATABASE_URL: "mysql://x" })).toEqual([
-      "DATABASE_URL has an invalid value",
-    ]);
+    expect(problemsOf({ ...valid, DATABASE_URL: "mysql://x" })).toContain(
+      "DATABASE_URL must start with postgresql://",
+    );
     expect(problemsOf({ ...valid, BETTER_AUTH_SECRET: "too-short" })).toEqual([
       "BETTER_AUTH_SECRET has an invalid value",
     ]);
@@ -74,10 +87,9 @@ describe("parseEnv", () => {
   });
 
   it("reports whitespace and other problems together", () => {
-    expect(problemsOf({ NODE_ENV: "production", RESEND_API_KEY: "a b" })).toEqual([
-      "RESEND_API_KEY must not contain whitespace",
-      "APP_BASE_URL is missing",
-    ]);
+    expect(
+      problemsOf({ NODE_ENV: "production", DATABASE_URL: FAKE_DB_URL, RESEND_API_KEY: "a b" }),
+    ).toEqual(["RESEND_API_KEY must not contain whitespace", "APP_BASE_URL is missing"]);
   });
 
   it("accepts EMAIL_FROM as a bare address only", () => {
@@ -91,9 +103,8 @@ describe("parseEnv", () => {
 
   it("accepts special characters without whitespace", () => {
     expect(
-      parseEnv({ ...valid, DATABASE_URL: "postgres://u:p%3C%3E@host/db?sslmode=require&x=y" })
-        .DATABASE_URL,
-    ).toBe("postgres://u:p%3C%3E@host/db?sslmode=require&x=y");
+      parseEnv({ ...valid, DATABASE_URL: `${FAKE_DB_URL}&application_name=a<c>d` }).DATABASE_URL,
+    ).toBe(`${FAKE_DB_URL}&application_name=a<c>d`);
   });
 
   it("never includes a value with whitespace in the error message", () => {

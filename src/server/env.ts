@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { checkConnectionUrl } from "./db/connection-url";
 
 /**
  * Server environment variables, validated with Zod.
@@ -31,8 +32,13 @@ export const envSchema = z
     // links later). Never derive links from the Host header.
     APP_BASE_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, "")),
 
-    // Phase 2 – PostgreSQL (Neon). Make required in Phase 2.
-    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    // Phase 2 – PostgreSQL (Neon), as the least-privilege app role, with
+    // sslmode=verify-full (rules in src/server/db/connection-url.ts).
+    DATABASE_URL: z.string().superRefine((value, ctx) => {
+      for (const problem of checkConnectionUrl(value, "app")) {
+        ctx.addIssue({ code: "custom", message: problem });
+      }
+    }),
 
     // Phase 3 – Better Auth + Resend. Make required in Phase 3.
     BETTER_AUTH_SECRET: z.string().min(32).optional(),
@@ -42,9 +48,9 @@ export const envSchema = z
     // course Dokku server can't store values containing spaces.
     EMAIL_FROM: z.email().optional(),
 
-    // Not here on purpose: ADMIN_DATABASE_URL (answer-key seed script, Phase 5).
-    // It's only ever passed to the seed script on the developer's machine and
-    // must never reach the running app or the Dokku config.
+    // Not here on purpose: ADMIN_DATABASE_URL (migrations, db scripts, answer
+    // seed). It's only ever passed to those scripts on the developer's machine
+    // via `op run` and must never reach the running app or the Dokku config.
   })
   .superRefine((env, ctx) => {
     // Zod 4 still runs this refinement when a field already failed, so only
