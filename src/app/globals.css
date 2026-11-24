@@ -60,3 +60,77 @@ p {
 .muted {
   color: var(--muted);
 }
+
+h2 {
+  margin-top: 28px;
+  font-size: 20px;
+}
+
+.form {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+  text-align: left;
+}
+
+.form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.form input {
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 10px;
+}
+
+button {
+  padding: 12px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(90deg, var(--accent1), var(--accent2));
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+}
+
+.links a {
+  color: var(--accent2);
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.notice-info {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.notice-error {
+  background: rgba(236, 72, 153, 0.15);
+}
+
+.secret {
+  padding: 10px;
+  overflow-x: auto;
+  font-size: 15px;
+  background: rgba(127, 127, 127, 0.12);
+  border-radius: 8px;
+}
+
+details {
+  margin-top: 16px;
+  text-align: left;
+}
