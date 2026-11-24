@@ -6,6 +6,7 @@
         "name": "web health",
         "description": "New release must answer /api/health before it replaces the running one",
         "path": "/api/health",
+        "port": 8080,
         "attempts": 5,
         "wait": 3,
         "timeout": 5

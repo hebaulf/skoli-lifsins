@@ -95,6 +95,11 @@ jobs:
             "for c in npm npx corepack yarn yarnpkg; do command -v \$c; done; \
              ls -d /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* 2>/dev/null; true")
           if [ -n "$found" ]; then echo "Package managers found in image:"; echo "$found"; exit 1; fi
+      - name: Image exposes only port 8080 (course Dokku mapping)
+        run: |
+          ports=$(docker image inspect -f '{{json .Config.ExposedPorts}}' skoli-lifsins:ci)
+          echo "exposed: $ports"
+          test "$ports" = '{"8080/tcp":{}}'
       - name: Container runs as non-root
         run: test "$(docker run --rm --entrypoint id skoli-lifsins:ci -u)" != "0"
       - name: Container exits when a required variable is missing
@@ -112,7 +117,11 @@ jobs:
           for i in $(seq 1 30); do
             status=$(docker inspect -f '{{.State.Health.Status}}' app)
             echo "health: $status"
-            [ "$status" = "healthy" ] && exit 0
+            if [ "$status" = "healthy" ]; then
+              # Healthcheck passed; also confirm the app answers on 8080 explicitly.
+              docker exec app node -e "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              exit 0
+            fi
             sleep 2
           done
           docker logs app

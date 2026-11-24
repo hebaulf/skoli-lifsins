@@ -27,9 +27,12 @@ RUN pnpm build && find .next/standalone .next/static -name '*.map' -delete
 
 # ---- 3. Runtime: only the standalone output ----
 FROM base AS runner
+# Port 8080: the course Dokku server maps the app to container port 8080
+# (inherited from the original nginx-unprivileged image) and students can't
+# change port mappings. Keep EXPOSE, PORT and the HEALTHCHECK in sync.
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
-    PORT=3000
+    PORT=8080
 
 # App files are owned by root and read-only for the app user; only the Next.js
 # cache directory is writable by it.
@@ -53,10 +56,10 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
 # Built-in non-root user from the official Node image.
 USER node
 
-EXPOSE 3000
+EXPOSE 8080
 
 # Uses Node's built-in fetch, so no curl/wget is needed in the image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 CMD ["node", "server.js"]

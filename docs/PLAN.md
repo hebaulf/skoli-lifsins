@@ -68,6 +68,7 @@ These go beyond the generic checklist and are where an app like this usually goe
 - Dokku builds from the Dockerfile in the repo root and runs the container.
 - Server secrets are set as Dokku config variables (runtime env), e.g. `dokku config:set s14 KEY=value`. Who runs this depends on server access, see section 6.
 - The container must: run as non-root, listen on `PORT` on `0.0.0.0`, have a HEALTHCHECK, and contain only the standalone build output.
+- **Port 8080 is fixed.** The course server maps the app to container port 8080 (set up for the original `nginx-unprivileged` image), and students can't change port settings (`dokku ports:*` is not available to us). The Dockerfile therefore uses `EXPOSE 8080` and `PORT=8080`; the HEALTHCHECK, `app.json` and CI check that port. Don't change it.
 - `.dockerignore` must exclude `.env*`, `.git`, `node_modules`, tests and source maps.
 - The site is public the moment it's pushed: the domain is in certificate transparency logs and gets scanned automatically. Only test data until Phase 11 passes.
 
