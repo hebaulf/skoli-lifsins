@@ -38,6 +38,18 @@ COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 RUN mkdir -p .next/cache && chown node:node .next/cache
 
+# The runtime only needs `node`. Remove the package managers bundled with the
+# base image (npm, npx, corepack, yarn): they're unused at runtime and carry
+# their own vulnerable dependencies. They stay in the deps/build stages.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /opt/yarn-* \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+           /usr/local/bin/corepack \
+           /usr/local/bin/yarn \
+           /usr/local/bin/yarnpkg
+
 # Built-in non-root user from the official Node image.
 USER node
 
