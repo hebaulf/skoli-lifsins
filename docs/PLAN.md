@@ -46,7 +46,7 @@ These go beyond the generic checklist and are where an app like this usually goe
 - **Authentication.** Min 12-character passwords, breached-password check, rate limits on login/sign-up/reset, no account enumeration, short-lived single-use reset links built from a configured base URL (not the Host header), HttpOnly/Secure/SameSite cookies, 2FA required for admins.
 - **Data minimisation.** Store name, email, role, group membership and quiz results. No kennitala. Decide a retention period for old student accounts.
 - **Users under 18.** Some students are 16–17. Consent and privacy policy wording need checking with the organisation's data protection officer.
-- **Supply chain.** pnpm `minimumReleaseAge`, committed lockfile, every new dependency justified and approved, Dependabot, pnpm audit in CI.
+- **Supply chain.** pnpm `minimumReleaseAge`, committed lockfile, every new dependency justified and approved, Dependabot, pnpm audit in CI. Urgent security patches can bypass the 7-day gate via `minimumReleaseAgeExclude`; the procedure is documented in `pnpm-workspace.yaml`.
 - **Secrets.** Local `.env` contains development values only. Production secrets live only in Dokku config and in the provider dashboards (Neon, Sanity, Resend). Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image.
 
 ## 4. Repository, tooling and deployment
@@ -104,6 +104,8 @@ Then build the data access layer in src/server/dal/:
 Explain the schema and the authorization rules in a short table before writing code. Write tests for each rule: no session, wrong role, wrong owner.
 ```
 
+**Env:** make `DATABASE_URL` required in `src/server/env.ts` (remove `.optional()`); set it in Dokku before deploying.
+
 ### Phase 3 – Authentication
 
 ```
@@ -120,6 +122,8 @@ Set up Better Auth with email + password:
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
+**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts`; set them in Dokku before deploying.
+
 ### Phase 4 – Groups and invitations
 
 ```
@@ -133,6 +137,8 @@ Also propose how teacher accounts should be approved (open sign up, admin approv
 Write tests for: accepting an expired token, reusing a token, accepting with the wrong email, a teacher acting on another teacher's group.
 ```
 
+**Env:** no new required variable (uses `APP_BASE_URL` for invite links, already required).
+
 ### Phase 5 – Course content in Sanity
 
 ```
@@ -144,6 +150,8 @@ Set up Sanity for course content:
 - Content is rendered safely (no raw HTML injection)
 Verify by checking the built client bundle and network responses that no correct answers or tokens reach the browser, and show me how you checked.
 ```
+
+**Env:** make `SANITY_PROJECT_ID`, `SANITY_DATASET` and `SANITY_READ_TOKEN` required in `src/server/env.ts`; set them in Dokku before deploying.
 
 ### Phase 6 – Student course flow
 
@@ -157,12 +165,16 @@ Server rules:
 Write tests for: submitting for a locked chapter, submitting for another student, submitting fake question ids, a 74% and a 75% score.
 ```
 
+**Env:** no new required variable.
+
 ### Phase 7 – Teacher dashboard
 
 ```
 Build the teacher area: dashboard with the teacher's groups and summary stats, group view with a student table (status, current chapter, progress, score per chapter, overall score; search, sort, filter, pagination for 30+ students), and a student detail view.
 All data comes through the DAL so a teacher can only ever see their own groups. Write tests that a teacher requesting another teacher's group or student by id gets a 404 (not a 403, so ids can't be probed).
 ```
+
+**Env:** no new required variable.
 
 ### Phase 8 – Admin
 
@@ -174,6 +186,8 @@ Build the admin area: overview with totals, and lists of teachers, groups and st
 Write tests that students and teachers are refused on every admin route and action.
 ```
 
+**Env:** no new required variable.
+
 ### Phase 9 – Diploma
 
 ```
@@ -183,6 +197,8 @@ Generate the diploma when a student completes all 13 chapters with ≥75% overal
 - A public verification page shows only that the diploma is valid, the name and date, nothing else
 - Only the student, their teacher and admins can download the PDF
 ```
+
+**Env:** no new required variable (verification links use `APP_BASE_URL`).
 
 ### Phase 10 – Hardening
 
@@ -198,11 +214,15 @@ Read docs/before-you-deploy-checklist.pdf. Harden the app:
 Then go through the checklist item by item and give me a table: item, status (done / not applicable / missing), and where it's handled in the code.
 ```
 
+**Env:** no new required variable unless logging/alerting needs one (e.g. an alert webhook URL); if so, add it to `src/server/env.ts` and `.env.example` as required.
+
 ### Phase 11 – Access-control test sweep
 
 ```
 Write an automated test that lists every route, page, server action and route handler in the app and calls each one: with no session, as a student, as a teacher, and as another teacher. Compare the results against the intended access rules and fail on any mismatch. Report anything that is reachable but shouldn't be.
 ```
+
+**Env:** no new required variable.
 
 ### Phase 12 – Audit
 
@@ -214,6 +234,8 @@ Focus especially on: access control between teachers, students and admins; quiz 
 ```
 
 Run it at least twice. Fix confirmed findings, check each "needs validation" item manually. Also run OWASP ZAP against the deployed test site.
+
+**Env:** no new required variable.
 
 ### Phase 13 – Pre-deploy and legal
 
@@ -229,6 +251,8 @@ Read docs/before-you-deploy-checklist.pdf. Prepare for production:
 - Licence check of all dependencies (flag GPL/AGPL)
 Give me a final go/no-go list.
 ```
+
+**Env:** confirm every variable in `src/server/env.ts` is required (none left `.optional()`) and set in Dokku with production values.
 
 ---
 
