@@ -216,14 +216,72 @@ Set up Better Auth with email + password:
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
-**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts` and uncomment their lines in `env.1password`. `EMAIL_FROM` is not a secret (plain value) and is the bare address only (no spaces allowed on the server); emails are sent with `formatSender()` from `src/server/email-sender.ts`, which adds the display name "Skóli lífsins".
+**Status:** code done. Your steps A–E below.
 
-**1Password (you create before this phase):**
+**Decisions (implemented):**
 
-- item `BetterAuth`, fields `dev-secret` and `demo-secret`: two different random values, each from `openssl rand -base64 32`
-- item `Resend`, fields `dev-api-key` and `demo-api-key`: two separate Resend API keys with "Sending access" only, the demo key restricted to the verified sending domain
+- **All auth flows are server actions** (`src/app/_actions/auth.ts` → `src/server/auth/flows.ts`). They validate with Zod, rate-limit, check the password policy themselves (so results don't depend on whether the email exists), pass only constant redirect targets, and return fixed codes. The Better Auth HTTP route forwards only the two email-link GETs (`/api/auth/verify-email`, `/api/auth/reset-password/<token>`); everything else is 404 (`src/server/auth/http-allowlist.ts`).
+- **Rate limits** in our own Postgres table (`auth_rate_limit`, HMAC-hashed keys, no raw emails/IPs), because Better Auth's limiter doesn't cover server-side calls: sign-in 5/15 min per email and 20/15 min per IP; sign-up 3/hour per IP; reset request 3/hour per email and 10/hour per IP; reset 10/hour per IP; 2FA sign-in 10/15 min per IP; 2FA setup and password change 5/15 min per user. Emails triggered by sign-up are limited **per recipient** (verification 3/day, "account already exists" 2/day, reset 5/day), so the forms can't flood an inbox.
+- **Client IP:** only the **last** `X-Forwarded-For` entry is used, the one Dokku's nginx adds; client-supplied values end up to the left and are ignored (`src/server/auth/client-ip.ts`, tested with spoofed headers). Better Auth's own IP tracking is off (no IPs stored on sessions).
+- **Roles:** `role` has `input: false` (ignored on sign-up, rejected on profile update); the sign-up path sets student/teacher on the server; a **database trigger** stops the app role from ever creating or promoting an admin. Admins only via `pnpm admin:create`.
+- **Passwords:** 12–128 characters; Have I Been Pwned (only a 5-character SHA-1 prefix leaves the server) **fails closed**: if the API is unreachable, sign-up/reset/change is refused with "try again in a moment" and a warning is logged (never the password or hash).
+- **Links:** built from `APP_BASE_URL` (never the Host header). Verification links expire in 24 hours, reset links in 15 minutes and are single use. Password reset revokes **all** sessions; password change revokes all **other** sessions.
+- **No enumeration:** sign-up answers the same for new and existing emails (existing users get a notice by email, or a fresh verification link if never verified); sign-in gives one message for wrong password, unknown and unverified email; reset always says "if an account exists…". Emails are sent in the background.
+- **Sessions:** cookies `__Secure-`, HttpOnly, Secure, SameSite=Lax. Lifetimes are **absolute** (activity never extends them): 7 days for students and teachers, **12 hours for admins** (set in the session-create hook and re-checked in `requireUser`). No cookie cache, so role changes apply immediately.
+- **2FA (TOTP):** required for admins (an admin without it can only reach the setup page), optional for teachers. "Trust this device" is never used. Enabling 2FA deletes all the user's sessions, so any session of a 2FA user passed the second factor (that's what `mfaVerified` relies on). No QR code (no extra dependency): authenticator apps take the setup key.
+- **TOTP secrets and backup codes are stored encrypted** (Better Auth default: XChaCha20-Poly1305, key derived from `BETTER_AUTH_SECRET`), not hashed. Accepted because: reading them needs both a database dump and `BETTER_AUTH_SECRET` (different systems: Neon vs Dokku config); they're only the second factor (the password is still needed); an attacker with both already has a full compromise; and hashing them would need custom code relying on plugin internals in the 2FA path.
+- **Deny by default:** `requireUser()`/`requireRole()` in every protected page and action; public routes and actions are allow-listed in `src/server/auth/public-routes.ts`; `tests/deny-by-default.test.ts` fails on any page, route or action that is neither. `src/proxy.ts` only redirects visitors without a session cookie (convenience, not a check).
+- **Email modes:** `EMAIL_TRANSPORT=resend` (default; logs only "email sent: <kind>") or `console` (prints the email incl. links to the local terminal, sends nothing). The app **refuses to start** with `console` unless `NODE_ENV=development` AND `APP_BASE_URL` is localhost.
+- Teacher sign-up is open until the Phase 4 decision. Better Auth telemetry is off.
 
-**Dokku (before deploying this phase):**
+**Known trade-offs:**
+
+- **Per-email login limits allow targeted lockout:** anyone who knows a user's email can make 5 failed sign-ins and keep that user locked out of password sign-in for up to 15 minutes at a time. Accepted for now (the alternative, no per-email limit, allows password guessing spread over many IPs). Revisit in Phase 10 if it becomes a problem (e.g. CAPTCHA after failures, or a sign-in link by email).
+- Sessions are absolute: students and teachers sign in again after 7 days even if active.
+- Resend free plan without a verified domain: emails reach **only your own address**. On the demo server only you can verify an account; test other users locally with `EMAIL_TRANSPORT=console`.
+
+**`BETTER_AUTH_SECRET` must never be rotated by simply replacing it.** It encrypts TOTP secrets and backup codes; a new value makes all of them unreadable (every 2FA user, including the admin, would be locked out of 2FA) and signs everyone out. If rotation is ever needed, use Better Auth's key-version mechanism:
+
+1. Generate a new value in 1Password (e.g. `BetterAuth/demo-secret-v2`, 64 letters/digits).
+2. Code change (its own commit, with tests): add `BETTER_AUTH_SECRETS` to `src/server/env.ts` (and `SECRET_ENV_KEYS`, `env.1password`) and pass it to Better Auth as `secrets: [{ version: 2, value: <new> }]`, **keeping** `BETTER_AUTH_SECRET` as the legacy key. New data is encrypted with version 2; existing data still decrypts with the legacy key.
+3. Set it on Dokku: `BETTER_AUTH_SECRETS=2:<new value>` (no spaces; use the `op read` pattern), keep `BETTER_AUTH_SECRET` unchanged. Everyone is signed out once (cookies are signed with the current version).
+4. The old secret can only be removed after every 2FA user has re-enrolled (Better Auth doesn't re-encrypt old rows). Until then, keep both.
+
+**Your steps:**
+
+A. **Resend** (twice: dev and demo). API Keys → **Create API Key** → name `skoli-lifsins-dev` (then `skoli-lifsins-demo`), permission **Sending access**, domain **All domains** (the only option without a verified domain) → copy the key **directly** into 1Password (shown once).
+
+B. **1Password**, vault `skoli-lifsins`:
+
+| Item         | Fields                                                                                                                                                                                                                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BetterAuth` | `dev-secret`, `demo-secret`: generator, 64 characters, letters and digits only                                                                                                                                                                                                                        |
+| `Resend`     | `dev-api-key`, `demo-api-key`: from step A                                                                                                                                                                                                                                                            |
+| `Admin`      | `email` (your address); `dev-password`, `demo-password`: generator, 40 characters, letters and digits. **No TOTP field**: you use a separate authenticator app for the admin. Put the **backup codes** shown at 2FA setup in this item (a "Backup codes" text field or the notes), one set per branch |
+
+C. **Migrate both branches** (dev first, then demo), as in Phase 2:
+
+```sh
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm db:migrate
+
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+DATABASE_URL='op://skoli-lifsins/Neon/dev-url' \
+op run -- pnpm db:check-grants
+```
+
+D. **Create the admin** on each branch (dev, then demo):
+
+```sh
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+BETTER_AUTH_SECRET='op://skoli-lifsins/BetterAuth/dev-secret' \
+ADMIN_EMAIL='op://skoli-lifsins/Admin/email' \
+ADMIN_PASSWORD='op://skoli-lifsins/Admin/dev-password' \
+op run -- pnpm admin:create
+```
+
+Then sign in (`pnpm dev:op` for dev): you're sent to the 2FA page. Add the setup key to your authenticator app, save the backup codes in the `Admin` item, confirm with a code, sign in again with a code.
+
+E. **Dokku** (before pushing this phase):
 
 ```sh
 auth_secret="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')" &&
@@ -232,8 +290,11 @@ auth_secret="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')" &&
   ssh dokku@vibe.smelltuher.is config:set s14 \
     BETTER_AUTH_SECRET="$auth_secret" \
     RESEND_API_KEY="$resend_key" \
-    EMAIL_FROM=no-reply@<verified-domain>; unset auth_secret resend_key
+    EMAIL_FROM=onboarding@resend.dev \
+    EMAIL_TRANSPORT=resend; unset auth_secret resend_key
 ```
+
+F. **After deploying, check the client-IP handling on the real server** (it depends on how the course nginx is configured). Request a password reset for an unknown address (`nobody@example.invalid`, so no email is sent) 11 times within an hour, each with a different made-up `X-Forwarded-For` header (e.g. with a browser extension or `curl -H` from your machine). The 11th must say "Of margar tilraunir" (too many attempts). If it doesn't, the spoofed header is being trusted: tell me before going further.
 
 ### Phase 4 – Groups and invitations
 
