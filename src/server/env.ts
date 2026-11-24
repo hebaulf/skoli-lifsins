@@ -19,12 +19,7 @@ import { z } from "zod";
  * Variables that hold secrets. In env.1password they must be op:// references.
  * Add every new secret here (and never log these values).
  */
-export const SECRET_ENV_KEYS = [
-  "DATABASE_URL",
-  "BETTER_AUTH_SECRET",
-  "RESEND_API_KEY",
-  "SANITY_READ_TOKEN",
-] as const;
+export const SECRET_ENV_KEYS = ["DATABASE_URL", "BETTER_AUTH_SECRET", "RESEND_API_KEY"] as const;
 
 const nonEmpty = z.string().min(1);
 
@@ -47,10 +42,9 @@ export const envSchema = z
     // course Dokku server can't store values containing spaces.
     EMAIL_FROM: z.email().optional(),
 
-    // Phase 5 – Sanity (private dataset, read-only token). Make required in Phase 5.
-    SANITY_PROJECT_ID: nonEmpty.optional(),
-    SANITY_DATASET: nonEmpty.optional(),
-    SANITY_READ_TOKEN: nonEmpty.optional(),
+    // Not here on purpose: ADMIN_DATABASE_URL (answer-key seed script, Phase 5).
+    // It's only ever passed to the seed script on the developer's machine and
+    // must never reach the running app or the Dokku config.
   })
   .superRefine((env, ctx) => {
     // Zod 4 still runs this refinement when a field already failed, so only

@@ -60,9 +60,8 @@ describe("parseEnv", () => {
     ["BETTER_AUTH_SECRET", "abcdefghijklmnopqrstuvwxyz012345 6789"],
     ["RESEND_API_KEY", "re_abc def"],
     ["EMAIL_FROM", "Skóli lífsins <no-reply@example.is>"],
-    ["SANITY_PROJECT_ID", "abc def"],
-    ["SANITY_DATASET", "demo\n"],
-    ["SANITY_READ_TOKEN", "\tsk-token"],
+    ["RESEND_API_KEY", "re_abc\n"],
+    ["DATABASE_URL", "\tpostgres://u:p@host/db"],
     ["NODE_ENV", "production "],
   ])("rejects whitespace in %s with a single clear message", (key, value) => {
     expect(problemsOf({ ...valid, [key]: value })).toEqual([`${key} must not contain whitespace`]);
@@ -100,7 +99,7 @@ describe("parseEnv", () => {
   it("never includes a value with whitespace in the error message", () => {
     const secret = "sk-very secret-token";
     try {
-      parseEnv({ ...valid, SANITY_READ_TOKEN: secret });
+      parseEnv({ ...valid, RESEND_API_KEY: secret });
       expect.unreachable();
     } catch (error) {
       expect((error as Error).message).not.toContain("secret");

@@ -13,7 +13,7 @@ Web app for a 13-chapter video course for young adults taking their first steps 
 
 ## Stack
 
-Next.js (App Router, output: "standalone"), TypeScript strict, pnpm, PostgreSQL (Neon, EU) + Drizzle ORM, Better Auth, Sanity (private dataset), Resend, Zod.
+Next.js (App Router, output: "standalone"), TypeScript strict, pnpm, PostgreSQL (Neon, EU) + Drizzle ORM, Better Auth, Resend, Zod. Course content (texts, questions, options) is typed TypeScript in the repo under src/server/ (server-only); the answer key lives only in Neon.
 Deployed with Dokku via git push (remote `vibe`), built from the Dockerfile in the repo root, live at https://14.vibe.smelltuher.is/. Server secrets are Dokku runtime config variables, never build args or files in the image.
 
 ## Security rules (non-negotiable)
@@ -22,6 +22,9 @@ Deployed with Dokku via git push (remote `vibe`), built from the Dockerfile in t
 - Never rely on middleware alone. All data access goes through the data access layer in src/server/dal/, which checks session, role AND ownership on every call.
 - Roles never come from client input. No code path can create an admin except the seed script.
 - Quiz correct answers never leave the server. Grading, unlocking and diploma eligibility are computed only on the server.
+- The GitHub repo is PUBLIC. Correct answers and explanations are never committed: not in content files, tests, fixtures, comments, commit messages or docs. They live only in Neon's answer key table, loaded by `pnpm seed:answers <path>` from a JSON file outside the repo. Tests use clearly fake answers for placeholder content only. Explanations are returned only after an attempt is graded. A chapter without a complete answer key can't be taken (fail closed).
+- Never run the answer seed script against a real database, never read or open answer files, and never ask me to paste answers into the chat. Give me the exact `op run` command to run it myself.
+- Content is rendered as plain text or simple formatting, never raw HTML.
 - Validate every input on the server with Zod. Never trust an id from the client without an ownership check.
 - No secrets in code, the repo, the Docker image or `NEXT_PUBLIC_` variables.
 - 1Password (vault `skoli-lifsins`) is the single source of truth for secrets. There is no plaintext .env file. The committed `env.1password` lists every variable: non-secrets as plain values, secrets as `op://skoli-lifsins/<item>/<field>` references with separate `dev-…` and `demo-…` fields. Local dev runs with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`). I set Dokku values myself with `v="$(op read 'op://skoli-lifsins/<item>/demo-<field>')" && [ -n "$v" ] && ssh dokku@vibe.smelltuher.is config:set s14 KEY="$v"; unset v` (several secrets: one shell variable each, all checked with `[ -n … ]`, all unset at the end; see docs/PLAN.md section 4). The server accepts no flags before the app name (no `--no-restart`, no `--encoded`), so every `config:set` restarts the app.

@@ -21,16 +21,16 @@ To run a phase in Claude Code: "Do Phase N from docs/PLAN.md." Plan first, wait 
 
 ## 2. Stack
 
-| Part       | Choice                                                                | Why                                                                                                                                                                 |
-| ---------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework  | Next.js (App Router, `output: "standalone"`), TypeScript strict, pnpm | Familiar; standalone output runs as a small Node server in Docker                                                                                                   |
-| Database   | PostgreSQL on Neon (EU region) + Drizzle ORM                          | Only reachable from the server, so no client-side database access or row-level-security pitfalls; parameterised queries by default                                  |
-| Auth       | Better Auth                                                           | Runs in our own app and database; rate limiting, 2FA, organisations/invitations, admin plugin, Have I Been Pwned plugin; scrypt password hashing (OWASP-acceptable) |
-| Content    | Sanity, **private dataset**, server-only read-only token              | Correct quiz answers must never be fetchable from the browser                                                                                                       |
-| Email      | Resend (or Postmark), SPF/DKIM configured                             | Invites, verification, password reset                                                                                                                               |
-| Validation | Zod                                                                   | Server-side validation of every input                                                                                                                               |
-| Video      | Vimeo or YouTube privacy-enhanced mode                                | Third-party embeds likely need cookie consent                                                                                                                       |
-| Hosting    | Dokku on the course server, built from the repo's Dockerfile          | Course requirement                                                                                                                                                  |
+| Part       | Choice                                                                              | Why                                                                                                                                                                 |
+| ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework  | Next.js (App Router, `output: "standalone"`), TypeScript strict, pnpm               | Familiar; standalone output runs as a small Node server in Docker                                                                                                   |
+| Database   | PostgreSQL on Neon (EU region) + Drizzle ORM                                        | Only reachable from the server, so no client-side database access or row-level-security pitfalls; parameterised queries by default                                  |
+| Auth       | Better Auth                                                                         | Runs in our own app and database; rate limiting, 2FA, organisations/invitations, admin plugin, Have I Been Pwned plugin; scrypt password hashing (OWASP-acceptable) |
+| Content    | Typed TypeScript files in the repo (`src/server/`, server-only); answer key in Neon | The repo is public: texts, questions and options can be committed, correct answers and explanations never; no extra service or token                                |
+| Email      | Resend (or Postmark), SPF/DKIM configured                                           | Invites, verification, password reset                                                                                                                               |
+| Validation | Zod                                                                                 | Server-side validation of every input                                                                                                                               |
+| Video      | Vimeo or YouTube privacy-enhanced mode                                              | Third-party embeds likely need cookie consent                                                                                                                       |
+| Hosting    | Dokku on the course server, built from the repo's Dockerfile                        | Course requirement                                                                                                                                                  |
 
 Keep Next.js and React patched promptly; both had serious vulnerabilities in 2025. Never rely on Next.js middleware alone for authorization.
 
@@ -39,6 +39,7 @@ Keep Next.js and React patched promptly; both had serious vulnerabilities in 202
 These go beyond the generic checklist and are where an app like this usually goes wrong.
 
 - **Quiz integrity.** Grading, the 75% unlock and diploma eligibility are computed only on the server. Correct answers never reach the browser. The server refuses to show a locked chapter or accept answers for it.
+- **Answer key (public repo).** The GitHub repo is public, so correct answers and explanations are never committed (not in content, tests, fixtures, docs or commit messages). They live only in Neon's answer key table, loaded with a seed script from a JSON file outside the repo, using a separate admin connection; the app's runtime database user can only `SELECT` from that table. Chapters with an incomplete answer key can't be taken (fail closed). Explanations are returned only after an attempt is graded. Safety nets: `.gitignore` patterns and a CI check for answer files. See Phase 5.
 - **Access control (OWASP A01).** A teacher sees only students in groups they own. A student sees only their own data. Admin sees everything. Enforced in the data access layer (`src/server/dal/`) on every call, not in middleware or the UI. Requests for someone else's data return 404, so ids can't be probed.
 - **Roles.** Never taken from client input. Sign-up path decides student vs teacher on the server. No code path creates an admin except the seed script.
 - **Teacher accounts.** Open teacher sign-up means anyone can create groups and send invite emails from our domain. Options: open sign-up, admin approval, or allowed email domains. **Open decision**, see section 6.
@@ -51,7 +52,8 @@ These go beyond the generic checklist and are where an app like this usually goe
   - **Local development:** no plaintext `.env` file. The committed `env.1password` lists every variable: non-secrets as plain values (e.g. `APP_BASE_URL=http://localhost:3000`), secrets as references (e.g. `DATABASE_URL=op://skoli-lifsins/Neon/dev-url`). Start the app with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`); `op run` injects the values into the process only and masks them in its output. Lines for later phases stay commented out until that phase, because `op run` fails on references to items that don't exist yet. `tests/env-1password.test.ts` checks the file against `src/server/env.ts` without needing any secret.
   - **Server:** the values live in Dokku config (runtime env), set by me from 1Password with `op read` (see section 4). The command contains only the `op://` reference, so no secret ends up in shell history or in the repo.
   - **Claude Code** is denied `op` and `ssh`, never fetches or sets secrets, never asks for secret values in the chat, and adds new variables to `env.1password` as `op://` references only.
-  - Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image. Provider dashboards (Neon, Sanity, Resend) are where values are created or rotated; they're copied into 1Password, never into files.
+  - **Admin database connection** (`ADMIN_DATABASE_URL`, Phase 5): used only by the answer seed script on my machine, passed in with `op run`. It is never in `env.1password`, `src/server/env.ts` or the Dokku config, so the running app can't write the answer key.
+  - Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image. Provider dashboards (Neon, Resend) are where values are created or rotated; they're copied into 1Password, never into files.
 
 ## 4. Repository, tooling and deployment
 
@@ -129,11 +131,12 @@ Show the plan and the list of packages you want to install before doing anything
 ### Phase 2 – Database schema and data access layer
 
 ```
-Design the database schema with Drizzle for: users (role: student | teacher | admin), groups (owned by a teacher), group memberships, invitations (token stored hashed, expires, single use, bound to an email), quiz attempts (user, chapter, score, timestamp), chapter progress, diplomas (with a random public verification id).
+Design the database schema with Drizzle for: users (role: student | teacher | admin), groups (owned by a teacher), group memberships, invitations (token stored hashed, expires, single use, bound to an email), quiz attempts (user, chapter, score, timestamp), chapter progress, diplomas (with a random public verification id), answer key (question id as primary key, correct option id, explanation; filled only by the Phase 5 seed script).
 Then build the data access layer in src/server/dal/:
 - Every function takes the current session and checks role and ownership before touching data
 - A teacher can only read students in groups they own; a student only their own data; admin everything
-- The database user the app connects with has only the privileges it needs (no superuser)
+- The database user the app connects with has only the privileges it needs (no superuser). On the answer key table it has SELECT only (no INSERT/UPDATE/DELETE); writes go through a separate admin role used by the seed script (Phase 5) and migrations
+- The answer key is read only by server-side grading code in the DAL; no DAL function returns correct options to a page, and explanations only as part of a graded attempt's result
 Explain the schema and the authorization rules in a short table before writing code. Write tests for each rule: no session, wrong role, wrong owner.
 ```
 
@@ -197,39 +200,62 @@ Write tests for: accepting an expired token, reusing a token, accepting with the
 
 **Env:** no new required variable (uses `APP_BASE_URL` for invite links, already required).
 
-### Phase 5 – Course content in Sanity
+### Phase 5 – Course content and answer key
 
 ```
-Set up Sanity for course content:
-- Schema: chapter (number, title, intro text, video URL), questions (text, options, correct option, explanation)
-- Use a private dataset. The read token is server-only and read-only.
-- A server-only content module that returns chapters and questions WITHOUT the correct answers for display, and a separate server-only function used for grading
-- Sanity Studio is only for editors; explain how to require strong login/SSO for Studio users
-- Content is rendered safely (no raw HTML injection)
-Verify by checking the built client bundle and network responses that no correct answers or tokens reach the browser, and show me how you checked.
+The GitHub repo is PUBLIC. Course content lives in the repo; correct answers and explanations must NEVER be committed. They live only in Neon.
+
+Content in the repo:
+- Typed content files for the 13 chapters under src/server/ with import "server-only": number, title, intro text, video URL, questions with options
+- Stable ids for chapters, questions and options (never derived from array position)
+- NO correct answers and NO explanations anywhere in the repo
+- Content validated with Zod in tests (13 chapters, unique ids, every question has options). Placeholder content for now
+- Content is rendered as plain text or simple formatting, never raw HTML
+
+Answer key in Neon (table from Phase 2: question id, correct option id, explanation):
+- A seed script, `pnpm seed:answers <path>`, reads a JSON answer file from OUTSIDE the repo (refuse a path inside the repo)
+- It validates the file with Zod against the content: every question has exactly one answer, every option id exists for its question, no unknown question ids
+- It upserts everything in one transaction (all or nothing)
+- It prints only counts (e.g. chapters, questions, inserted/updated), never answers or explanations
+- It connects with a separate admin connection string, ADMIN_DATABASE_URL, read only by the seed script (not in src/server/env.ts, env.1password or Dokku). The app's runtime database user has SELECT only on the answer key table. Both connection strings come from 1Password via op run
+
+Rules:
+- Fail closed: a chapter whose questions don't all have an answer in the database can't be taken, and the admin overview (Phase 8) shows a warning for it
+- Explanations are returned only after an attempt is graded
+- Tests use clearly fake answer fixtures for the placeholder content only, never real answers
+- Safety nets: .gitignore patterns for answer files (e.g. *answers*.json), and a CI check that fails if any committed file matches those patterns
+
+Verify by checking the built client bundle and network responses that no correct answers or explanations (before grading) reach the browser, and show me how you checked.
 ```
 
-**Env:** make `SANITY_PROJECT_ID`, `SANITY_DATASET` and `SANITY_READ_TOKEN` required in `src/server/env.ts` and uncomment their lines in `env.1password` (fill in the real project id there; project id and dataset name are not secrets).
+**Note:** the real course texts are committed only once the organisation confirms they may be public (open decision, section 6). Until then the repo has placeholder content only.
 
-**1Password (you create before this phase):** item `Sanity`, fields `dev-read-token` and `demo-read-token`: two separate Sanity API tokens with the **Viewer** (read-only) role, one per dataset.
+**Env (app):** no new app variable. `ADMIN_DATABASE_URL` is deliberately **not** added to `src/server/env.ts`, `env.1password` or Dokku.
 
-**Dokku (before deploying this phase):**
+**1Password (you create before this phase):** in item `Neon`, fields `dev-admin-url` and `demo-admin-url`: connection strings for the admin role that may write the answer key (dev branch and demo branch), with `sslmode=require`.
+
+**Answer file:** keep it outside the repo, e.g. `~/skoli-lifsins-private/answers.json` (best stored in 1Password as a document, exported only when seeding). Claude never opens it and never runs the seed against a real database.
+
+**Seeding (you run it yourself):** `op run` resolves the `op://` reference in the environment variable, so the connection string never appears on screen or in shell history.
 
 ```sh
-v="$(op read 'op://skoli-lifsins/Sanity/demo-read-token')" && [ -n "$v" ] &&
-  ssh dokku@vibe.smelltuher.is config:set s14 \
-    SANITY_READ_TOKEN="$v" \
-    SANITY_PROJECT_ID=<sanity-project-id> \
-    SANITY_DATASET=<demo-dataset-name>; unset v
+# dev database
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm seed:answers ~/skoli-lifsins-private/answers.json
+
+# demo database (used by https://14.vibe.smelltuher.is/)
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/demo-admin-url' op run -- pnpm seed:answers ~/skoli-lifsins-private/answers.json
 ```
+
+**Dokku:** nothing to set in this phase.
 
 ### Phase 6 – Student course flow
 
 ```
 Build the student flow from the Figma design: dashboard (progress, chapter list with locked/current/completed states, continue button), chapter page with video, quiz (one question per screen), and result screens (passed / failed with retry).
 Server rules:
-- The server refuses to show a chapter or accept quiz answers for a chapter that isn't unlocked
-- Grading happens in a server action that loads the correct answers server-side, computes the score, stores the attempt and updates progress
+- The server refuses to show a chapter or accept quiz answers for a chapter that isn't unlocked, or whose answer key is incomplete (fail closed)
+- Grading happens in a server action that reads the answer key from the database via the DAL (never from repo files), computes the score, stores the attempt and updates progress
+- Explanations are shown only on the result screen of a graded attempt, loaded via the DAL
 - Validate the submitted answers with Zod (right chapter, right question ids, one answer each)
 - Limit how often a student can submit attempts per chapter
 Write tests for: submitting for a locked chapter, submitting for another student, submitting fake question ids, a 74% and a 75% score.
@@ -250,6 +276,7 @@ All data comes through the DAL so a teacher can only ever see their own groups. 
 
 ```
 Build the admin area: overview with totals, and lists of teachers, groups and students with search and filters.
+- The overview shows a warning for every chapter whose answer key is incomplete (counts only, never answers)
 - Admin routes require role admin AND completed 2FA, checked on the server in every page and action
 - Admin pages aren't linked from or discoverable in the public app
 - Log admin actions (who, what, when) without logging passwords or tokens
@@ -300,7 +327,7 @@ Install the Cloudflare security-audit skill from a pinned commit after reading i
 
 ```
 Security audit this codebase, output to ~/audits/skoli-lifsins.
-Focus especially on: access control between teachers, students and admins; quiz answer exposure and grading bypass; invitation tokens; authentication flows; secrets in the client bundle.
+Focus especially on: access control between teachers, students and admins; quiz answer exposure and grading bypass; correct answers or explanations committed to the public repo (including git history); invitation tokens; authentication flows; secrets in the client bundle.
 ```
 
 Run it at least twice. Fix confirmed findings, check each "needs validation" item manually. Also run OWASP ZAP against the deployed test site.
@@ -315,7 +342,7 @@ Read docs/before-you-deploy-checklist.pdf. Prepare for production:
 - Run Trivy on the final image and fix anything high or critical
 - Confirm that /.git, /.env, source maps and the old index.html are not reachable on https://14.vibe.smelltuher.is/
 - Backups: show me how to restore a Neon backup to a test branch, and let me try it
-- A list of every third party that sees user data (hosting, database, email, CMS, video) and whether we need a DPA with each
+- A list of every third party that sees user data (hosting, database, email, video) and whether we need a DPA with each
 - Data export and deletion for a user
 - Draft privacy policy points, including handling of users under 18, for me to take to the organization
 - Licence check of all dependencies (flag GPL/AGPL)
@@ -328,7 +355,9 @@ Give me a final go/no-go list.
 
 ## 6. Open decisions
 
-- [ ] GitHub repo public or private (public gives free secret scanning, push protection and CodeQL)
+- [x] GitHub repo public or private: resolved, **public** (free secret scanning, push protection and CodeQL). Consequence: correct answers and explanations never go in the repo (see section 3 and Phase 5).
+- [ ] Organisation confirms the real course texts (chapter texts, questions, options) may be public, before they're committed. Until then: placeholder content only.
+- [x] Content platform: resolved, Sanity dropped. Content is typed TypeScript in the repo; answer key in Neon.
 - [ ] Teacher account approval: open sign-up, admin approval, or allowed email domains
 - [x] Dokku access: resolved. I can run `config:show` and `config:set` for s14; not port commands. The app listens on container port 8080 to match the existing mapping.
 - [ ] Retention period for inactive student accounts
