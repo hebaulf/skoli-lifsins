@@ -87,7 +87,7 @@ jobs:
       - name: Image must not contain env files, tests or source maps
         run: |
           found=$(docker run --rm --entrypoint sh skoli-lifsins:ci -c \
-            "find /app \( -name '.env*' -o -name '*.test.ts' -o -name '*.map' -o -name '.git' \) 2>/dev/null")
+            "find /app \( -name '.env*' -o -name 'env.1password' -o -name '*.test.ts' -o -name '*.map' -o -name '.git' \) 2>/dev/null")
           if [ -n "$found" ]; then echo "Unexpected files in image:"; echo "$found"; exit 1; fi
       - name: Image contains no package managers (npm, npx, corepack, yarn)
         run: |

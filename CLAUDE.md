@@ -23,7 +23,12 @@ Deployed with Dokku via git push (remote `vibe`), built from the Dockerfile in t
 - Roles never come from client input. No code path can create an admin except the seed script.
 - Quiz correct answers never leave the server. Grading, unlocking and diploma eligibility are computed only on the server.
 - Validate every input on the server with Zod. Never trust an id from the client without an ownership check.
-- No secrets in code, the repo, or NEXT*PUBLIC* variables. Never read, print or edit .env files; tell me which variables to add.
+- No secrets in code, the repo, the Docker image or `NEXT_PUBLIC_` variables.
+- 1Password (vault `skoli-lifsins`) is the single source of truth for secrets. There is no plaintext .env file. The committed `env.1password` lists every variable: non-secrets as plain values, secrets as `op://skoli-lifsins/<item>/<field>` references with separate `dev-…` and `demo-…` fields. Local dev runs with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`). I set Dokku values myself with `ssh dokku@vibe.smelltuher.is config:set --no-restart s14 KEY="$(op read 'op://skoli-lifsins/<item>/demo-<field>')"`.
+- Never run `op` (or `pnpm dev:op`) or `ssh`, and never fetch, print or set secret values. Never ask me to paste a secret value into the chat. When the app must run with real secrets, ask me to start it; prefer tests that need no real secrets.
+- New variable: add it to `src/server/env.ts` (secrets also to `SECRET_ENV_KEYS`) and to `env.1password` (secrets as `op://` references, never values), then tell me which 1Password item/fields to create and the exact `config:set` command for the demo value.
+- Never read, print or edit .env files.
+- Course server: I can run `config:show` and `config:set` for s14, not port commands. The app must listen on container port 8080.
 - No new dependency without my approval. Before adding one, state its exact npm name, what it's for, and why it's trustworthy. Never guess package names.
 - User-facing errors never contain stack traces, SQL or internals. Login, sign up and password reset never reveal whether an account exists.
 - Store only what's needed: name, email, role, group membership, quiz results. No kennitala.

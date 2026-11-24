@@ -4,13 +4,27 @@ import { z } from "zod";
 /**
  * Server environment variables, validated with Zod.
  *
- * - Values come only from the runtime environment (Dokku config in production,
- *   .env locally). Never from build args, never from NEXT_PUBLIC_ variables.
+ * - Values come only from the runtime environment: Dokku config on the server,
+ *   `op run --env-file=env.1password` locally (1Password is the source of
+ *   truth). Never from build args, files in the image or NEXT_PUBLIC_ variables.
  * - Variables belonging to later phases are optional until the phase that uses
  *   them; docs/PLAN.md says in each phase which one to make required here.
+ * - Every variable here must also be listed in env.1password (checked by
+ *   tests/env-1password.test.ts).
  * - Error messages list variable NAMES only, never values, so a secret can't
  *   end up in a log.
  */
+
+/**
+ * Variables that hold secrets. In env.1password they must be op:// references.
+ * Add every new secret here (and never log these values).
+ */
+export const SECRET_ENV_KEYS = [
+  "DATABASE_URL",
+  "BETTER_AUTH_SECRET",
+  "RESEND_API_KEY",
+  "SANITY_READ_TOKEN",
+] as const;
 
 const nonEmpty = z.string().trim().min(1);
 

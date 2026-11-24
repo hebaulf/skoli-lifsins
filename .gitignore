@@ -1,7 +1,8 @@
 # secrets / local env
+# No plaintext .env files: secrets come from 1Password via env.1password
+# (committed, contains only op:// references). Ignored in case one appears.
 .env
 .env.*
-!.env.example
 *.pem
 *.key
 

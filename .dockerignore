@@ -1,6 +1,8 @@
 # Secrets: never in the build context, never in the image
 .env
 .env.*
+# Local-dev 1Password reference file: no secrets, but not needed in the image
+env.1password
 *.pem
 *.key
 

@@ -47,7 +47,11 @@ These go beyond the generic checklist and are where an app like this usually goe
 - **Data minimisation.** Store name, email, role, group membership and quiz results. No kennitala. Decide a retention period for old student accounts.
 - **Users under 18.** Some students are 16–17. Consent and privacy policy wording need checking with the organisation's data protection officer.
 - **Supply chain.** pnpm `minimumReleaseAge`, committed lockfile, every new dependency justified and approved, Dependabot, pnpm audit in CI. Urgent security patches can bypass the 7-day gate via `minimumReleaseAgeExclude`; the procedure is documented in `pnpm-workspace.yaml`.
-- **Secrets.** Local `.env` contains development values only. Production secrets live only in Dokku config and in the provider dashboards (Neon, Sanity, Resend). Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image.
+- **Secrets.** 1Password is the single source of truth, in the vault `skoli-lifsins`. Each secret is an item (e.g. `Neon`) with separate fields for development and the demo server (e.g. `dev-url` and `demo-url`), so a leaked dev value never unlocks the deployed app.
+  - **Local development:** no plaintext `.env` file. The committed `env.1password` lists every variable: non-secrets as plain values (e.g. `APP_BASE_URL=http://localhost:3000`), secrets as references (e.g. `DATABASE_URL=op://skoli-lifsins/Neon/dev-url`). Start the app with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`); `op run` injects the values into the process only and masks them in its output. Lines for later phases stay commented out until that phase, because `op run` fails on references to items that don't exist yet. `tests/env-1password.test.ts` checks the file against `src/server/env.ts` without needing any secret.
+  - **Server:** the values live in Dokku config (runtime env), set by me from 1Password with `op read` (see section 4). The command contains only the `op://` reference, so no secret ends up in shell history or in the repo.
+  - **Claude Code** is denied `op` and `ssh`, never fetches or sets secrets, never asks for secret values in the chat, and adds new variables to `env.1password` as `op://` references only.
+  - Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image. Provider dashboards (Neon, Sanity, Resend) are where values are created or rotated; they're copied into 1Password, never into files.
 
 ## 4. Repository, tooling and deployment
 
@@ -61,15 +65,23 @@ These go beyond the generic checklist and are where an app like this usually goe
 
 - GitHub: 2FA on account, Dependabot alerts and security updates, secret scanning + push protection and CodeQL (if the repo is public), ruleset on `main` blocking force pushes and deletion. Add "require status checks" once CI exists.
 - gitleaks pre-commit hook (local, in `.git/hooks/pre-commit`).
-- `.claude/settings.json` denies reading `.env*`, `git push`, `ssh`, `curl`, `wget`.
+- `.claude/settings.json` denies reading `.env*`, `git push`, `ssh`, `curl`, `wget`, `op`.
 
 ### Dokku notes
 
 - Dokku builds from the Dockerfile in the repo root and runs the container.
-- Server secrets are set as Dokku config variables (runtime env), e.g. `dokku config:set s14 KEY=value`. Who runs this depends on server access, see section 6.
+- **What I can run on the server:** `config:show` and `config:set` for `s14` (over `ssh dokku@vibe.smelltuher.is …`). **Not** port commands (`ports:*`).
+- Server config is runtime env, set by me from 1Password. Secrets with `op read` (demo field), non-secrets as plain values:
+  ```sh
+  ssh dokku@vibe.smelltuher.is config:set --no-restart s14 KEY="$(op read 'op://skoli-lifsins/<item>/demo-<field>')"
+  ssh dokku@vibe.smelltuher.is config:set --no-restart s14 APP_BASE_URL=https://14.vibe.smelltuher.is
+  ```
+  `--no-restart` stages the value; it takes effect on the next deploy (`git push vibe main`). If `op read` fails, the variable is set to an empty string and the next release fails its startup check, so the old release keeps running. Check with `ssh dokku@vibe.smelltuher.is config:show s14`; note that this prints the values, so don't share its output (and don't paste it into Claude).
+- Currently required on the server: `APP_BASE_URL`. Each later phase below lists what it adds.
+- `PORT` must not be set in Dokku config (it would override `PORT=8080` from the image). Check with `config:show`.
 - The container must: run as non-root, listen on `PORT` on `0.0.0.0`, have a HEALTHCHECK, and contain only the standalone build output.
 - **Port 8080 is fixed.** The course server maps the app to container port 8080 (set up for the original `nginx-unprivileged` image), and students can't change port settings (`dokku ports:*` is not available to us). The Dockerfile therefore uses `EXPOSE 8080` and `PORT=8080`; the HEALTHCHECK, `app.json` and CI check that port. Don't change it.
-- `.dockerignore` must exclude `.env*`, `.git`, `node_modules`, tests and source maps.
+- `.dockerignore` must exclude `.env*`, `env.1password`, `.git`, `node_modules`, tests and source maps.
 - The site is public the moment it's pushed: the domain is in certificate transparency logs and gets scanned automatically. Only test data until Phase 11 passes.
 
 ---
@@ -86,7 +98,7 @@ Then set up the project skeleton in this folder:
 - Replace the Dockerfile with a multi-stage build: install and build in one stage, run from a small final image containing only the standalone output; run as a non-root user; listen on the PORT env variable on 0.0.0.0; add a HEALTHCHECK
 - A .dockerignore that excludes .env*, .git, node_modules, tests and source maps
 - No secrets as build args or in the image; server secrets are read at runtime from env variables set in Dokku
-- Extend .gitignore; .env.example listing every variable we'll need (no real values)
+- Extend .gitignore; env.1password listing every variable we'll need (plain values for non-secrets, op:// references for secrets, never real secret values) — replaced the original .env.example, see section 3
 - An env validation module (Zod) that fails at startup if a required server variable is missing
 - A simple placeholder start page (no login yet) so the first deploy shows nothing sensitive
 - GitHub Actions workflow running: typecheck, lint, tests, pnpm audit, Semgrep, gitleaks, and a Docker image scan with Trivy
@@ -105,7 +117,15 @@ Then build the data access layer in src/server/dal/:
 Explain the schema and the authorization rules in a short table before writing code. Write tests for each rule: no session, wrong role, wrong owner.
 ```
 
-**Env:** make `DATABASE_URL` required in `src/server/env.ts` (remove `.optional()`); set it in Dokku before deploying.
+**Env:** make `DATABASE_URL` required in `src/server/env.ts` (remove `.optional()`) and uncomment its line in `env.1password`.
+
+**1Password (you create before this phase):** item `Neon` in vault `skoli-lifsins`, fields `dev-url` (Neon dev branch, least-privilege app user) and `demo-url` (separate Neon branch for the demo server, least-privilege app user). Both with `sslmode=require`.
+
+**Dokku (before deploying this phase):**
+
+```sh
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 DATABASE_URL="$(op read 'op://skoli-lifsins/Neon/demo-url')"
+```
 
 ### Phase 3 – Authentication
 
@@ -123,7 +143,20 @@ Set up Better Auth with email + password:
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
-**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts`; set them in Dokku before deploying.
+**Env:** make `BETTER_AUTH_SECRET`, `RESEND_API_KEY` and `EMAIL_FROM` required in `src/server/env.ts` and uncomment their lines in `env.1password`. `EMAIL_FROM` is not a secret (plain value).
+
+**1Password (you create before this phase):**
+
+- item `BetterAuth`, fields `dev-secret` and `demo-secret`: two different random values, each from `openssl rand -base64 32`
+- item `Resend`, fields `dev-api-key` and `demo-api-key`: two separate Resend API keys with "Sending access" only, the demo key restricted to the verified sending domain
+
+**Dokku (before deploying this phase):**
+
+```sh
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 BETTER_AUTH_SECRET="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')"
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 RESEND_API_KEY="$(op read 'op://skoli-lifsins/Resend/demo-api-key')"
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 EMAIL_FROM="Skóli lífsins <no-reply@<verified-domain>>"
+```
 
 ### Phase 4 – Groups and invitations
 
@@ -152,7 +185,16 @@ Set up Sanity for course content:
 Verify by checking the built client bundle and network responses that no correct answers or tokens reach the browser, and show me how you checked.
 ```
 
-**Env:** make `SANITY_PROJECT_ID`, `SANITY_DATASET` and `SANITY_READ_TOKEN` required in `src/server/env.ts`; set them in Dokku before deploying.
+**Env:** make `SANITY_PROJECT_ID`, `SANITY_DATASET` and `SANITY_READ_TOKEN` required in `src/server/env.ts` and uncomment their lines in `env.1password` (fill in the real project id there; project id and dataset name are not secrets).
+
+**1Password (you create before this phase):** item `Sanity`, fields `dev-read-token` and `demo-read-token`: two separate Sanity API tokens with the **Viewer** (read-only) role, one per dataset.
+
+**Dokku (before deploying this phase):**
+
+```sh
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 SANITY_READ_TOKEN="$(op read 'op://skoli-lifsins/Sanity/demo-read-token')"
+ssh dokku@vibe.smelltuher.is config:set --no-restart s14 SANITY_PROJECT_ID=<sanity-project-id> SANITY_DATASET=<demo-dataset-name>
+```
 
 ### Phase 6 – Student course flow
 
@@ -215,7 +257,7 @@ Read docs/before-you-deploy-checklist.pdf. Harden the app:
 Then go through the checklist item by item and give me a table: item, status (done / not applicable / missing), and where it's handled in the code.
 ```
 
-**Env:** no new required variable unless logging/alerting needs one (e.g. an alert webhook URL); if so, add it to `src/server/env.ts` and `.env.example` as required.
+**Env:** no new required variable unless logging/alerting needs one (e.g. an alert webhook URL); if so, add it to `src/server/env.ts` (and `SECRET_ENV_KEYS`) and to `env.1password` as an `op://` reference, and give me the 1Password item/fields (dev and demo) to create and the exact `config:set` command for the demo value.
 
 ### Phase 11 – Access-control test sweep
 
@@ -253,7 +295,7 @@ Read docs/before-you-deploy-checklist.pdf. Prepare for production:
 Give me a final go/no-go list.
 ```
 
-**Env:** confirm every variable in `src/server/env.ts` is required (none left `.optional()`) and set in Dokku with production values.
+**Env:** confirm every variable in `src/server/env.ts` is required (none left `.optional()`), every line in `env.1password` is active, and every variable is set in Dokku from the `demo-…` fields (check names with `config:show`, without sharing its output). If a real production environment follows the demo, it gets its own `prod-…` fields.
 
 ---
 
@@ -261,7 +303,7 @@ Give me a final go/no-go list.
 
 - [ ] GitHub repo public or private (public gives free secret scanning, push protection and CodeQL)
 - [ ] Teacher account approval: open sign-up, admin approval, or allowed email domains
-- [ ] Dokku access: can I run `dokku config:set` myself, or does the course teacher set config variables?
+- [x] Dokku access: resolved. I can run `config:show` and `config:set` for s14; not port commands. The app listens on container port 8080 to match the existing mapping.
 - [ ] Retention period for inactive student accounts
 - [ ] Video provider (Vimeo or YouTube privacy-enhanced)
 - [ ] Under-18 consent and privacy policy wording (with the organisation's DPO)
