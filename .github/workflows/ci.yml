@@ -89,12 +89,21 @@ jobs:
           found=$(docker run --rm --entrypoint sh skoli-lifsins:ci -c \
             "find /app \( -name '.env*' -o -name 'env.1password' -o -name '*.test.ts' -o -name '*.map' -o -name '.git' \) 2>/dev/null")
           if [ -n "$found" ]; then echo "Unexpected files in image:"; echo "$found"; exit 1; fi
-      - name: Image contains no package managers (npm, npx, corepack, yarn)
+      - name: Image contains no package managers (npm, npx, corepack, yarn, pnpm)
+        # Runs as root so directories like /root/.cache are actually searched.
         run: |
-          found=$(docker run --rm --entrypoint sh skoli-lifsins:ci -c \
-            "for c in npm npx corepack yarn yarnpkg; do command -v \$c; done; \
-             ls -d /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* 2>/dev/null; true")
+          found=$(docker run --rm --user root --entrypoint sh skoli-lifsins:ci -c \
+            "for c in npm npx corepack yarn yarnpkg pnpm pnpx; do command -v \$c; done; \
+             ls -d /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* /root/.cache/node/corepack 2>/dev/null; \
+             find / -xdev \( -name 'pnpm.cjs' -o -name 'pnpm.mjs' -o -type d -name corepack \) -not -path '/proc/*' 2>/dev/null; true")
           if [ -n "$found" ]; then echo "Package managers found in image:"; echo "$found"; exit 1; fi
+      - name: Build stage works with networking disabled
+        # Builds the inputs of the `build` stage (base + deps + source), then
+        # runs the exact same build script with no network at all. Fails if
+        # anything after `deps` (Next.js, Corepack, pnpm) tries to download.
+        run: |
+          docker build --target build-input -t skoli-lifsins:build-input .
+          docker run --rm --network=none skoli-lifsins:build-input sh scripts/build-standalone.sh
       - name: Image exposes only port 8080 (course Dokku mapping)
         run: |
           ports=$(docker image inspect -f '{{json .Config.ExposedPorts}}' skoli-lifsins:ci)

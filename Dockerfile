@@ -1,32 +1,47 @@
-# syntax=docker/dockerfile:1
+# Network use during the build is limited to the `base` stage (download pnpm
+# once) and the `deps` stage (pnpm install). Every later stage works offline;
+# CI checks this by running the build step with networking disabled.
+# (No `# syntax=` line on purpose: it would make BuildKit fetch a frontend
+# image from Docker Hub on every build, another network dependency.)
 
-# Base image pinned by tag AND digest: the digest guarantees we get exactly the
-# image we reviewed, the tag keeps it readable. Dependabot opens PRs to bump it.
-FROM node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS base
-ENV NEXT_TELEMETRY_DISABLED=1 \
-    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# ---- 0. Node runtime: pinned by tag AND digest ----
+# The digest guarantees we get exactly the image we reviewed, the tag keeps it
+# readable. Dependabot opens PRs to bump it. This stage has no pnpm.
+FROM node:24.22.3-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS node
+ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
 
-# ---- 1. Install dependencies (cached unless the lockfile changes) ----
+# ---- 1. Build tooling: pnpm, downloaded exactly once ----
+FROM node AS base
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# `corepack install` downloads exactly the version in package.json
+# "packageManager" into Corepack's cache, which every stage FROM base inherits.
+COPY package.json ./
+RUN corepack enable && corepack install
+# From here on Corepack must never download anything: fail instead of fetching.
+ENV COREPACK_ENABLE_NETWORK=0
+
+# ---- 2. Install dependencies (the only network step after `base`) ----
 FROM base AS deps
-# Corepack installs exactly the pnpm version in package.json "packageManager".
-RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# ---- 2. Build ----
+# ---- 3. Build inputs: dependencies + source (no RUN, no network) ----
 # No secrets here: no ARGs, no env files (excluded by .dockerignore).
 # Server secrets are read at runtime from Dokku config variables.
-FROM base AS build
-RUN corepack enable
+FROM base AS build-input
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Next.js emits source maps for server bundles; they're not needed at runtime
-# and must not ship in the image, so delete them right after the build.
-RUN pnpm build && find .next/standalone .next/static -name '*.map' -delete
 
-# ---- 3. Runtime: only the standalone output ----
-FROM base AS runner
+# ---- 4. Build (offline) ----
+# CI runs this same script in the build-input image with --network=none.
+FROM build-input AS build
+RUN sh scripts/build-standalone.sh
+
+# ---- 5. Runtime: only the standalone output, no package managers ----
+# Starts from the clean `node` stage, so the pnpm download and the Corepack
+# shims from `base` never reach this image.
+FROM node AS runner
 # Port 8080: the course Dokku server maps the app to container port 8080
 # (inherited from the original nginx-unprivileged image) and students can't
 # change port mappings. Keep EXPOSE, PORT and the HEALTHCHECK in sync.
@@ -42,8 +57,8 @@ COPY --from=build /app/public ./public
 RUN mkdir -p .next/cache && chown node:node .next/cache
 
 # The runtime only needs `node`. Remove the package managers bundled with the
-# base image (npm, npx, corepack, yarn): they're unused at runtime and carry
-# their own vulnerable dependencies. They stay in the deps/build stages.
+# Node image (npm, npx, corepack, yarn): they're unused at runtime and carry
+# their own vulnerable dependencies.
 RUN rm -rf /usr/local/lib/node_modules/npm \
            /usr/local/lib/node_modules/corepack \
            /opt/yarn-* \
