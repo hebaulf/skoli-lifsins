@@ -27,7 +27,7 @@ tests
 **/*.test.tsx
 **/*.spec.ts
 **/*.spec.tsx
-vitest.config.ts
+vitest.config.mts
 
 # Source maps
 **/*.map
