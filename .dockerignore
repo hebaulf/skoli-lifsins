@@ -6,6 +6,15 @@ env.1password
 *.pem
 *.key
 
+# Answer-key data files never belong in the build context (see .gitignore)
+**/*[Aa][Nn][Ss][Ww][Ee][Rr]*.json
+**/*[Aa][Nn][Ss][Ww][Ee][Rr]*.csv
+**/*[Aa][Nn][Ss][Ww][Ee][Rr]*.yaml
+**/*[Aa][Nn][Ss][Ww][Ee][Rr]*.yml
+**/*[Ss][Vv][Oo][Rr]*.json
+**/*[Ss][Vv]ö[Rr]*.json
+**/*[Ss][Vv]Ö[Rr]*.json
+
 # VCS and tooling
 .git
 .github

@@ -6,6 +6,21 @@
 *.pem
 *.key
 
+# Answer-key data files: correct answers and explanations live only in Neon,
+# never in this PUBLIC repo (docs/PLAN.md, Phase 5). Case-insensitive via
+# character classes; CI double-checks with scripts/check-no-answer-files.sh.
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.json
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.csv
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.tsv
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.yaml
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.yml
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.txt
+*[Aa][Nn][Ss][Ww][Ee][Rr]*.xlsx
+*[Ss][Vv][Oo][Rr]*.json
+# ö/Ö as literals: [Öö] doesn't work for multi-byte UTF-8 letters
+*[Ss][Vv]ö[Rr]*.json
+*[Ss][Vv]Ö[Rr]*.json
+
 # dependencies
 node_modules/
 .pnpm-store/

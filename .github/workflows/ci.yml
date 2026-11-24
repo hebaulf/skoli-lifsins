@@ -74,6 +74,20 @@ jobs:
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE"
           git /repo --redact --verbose --exit-code 1
 
+  answer-files:
+    name: No answer-key files (tree and full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Current tree
+        run: sh scripts/check-no-answer-files.sh
+      - name: Full git history (the repo is public, so deleted files still count)
+        run: sh scripts/check-no-answer-files.sh --history
+
   docker:
     name: Docker build, smoke test, Trivy scan
     runs-on: ubuntu-latest

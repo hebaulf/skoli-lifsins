@@ -228,6 +228,8 @@ Rules:
 Verify by checking the built client bundle and network responses that no correct answers or explanations (before grading) reach the browser, and show me how you checked.
 ```
 
+**Already in place (added before this phase):** `.gitignore`/`.dockerignore` patterns and `scripts/check-no-answer-files.sh`, run by the `answer-files` CI job on the current tree and the full git history. They match data files (`json`, `csv`, `tsv`, `yaml`, `yml`, `txt`, `xlsx`) whose name contains "answer", "svor" or "svör", case-insensitively; code files like `answer-key.ts` are allowed. So fake test fixtures must be TypeScript, not JSON.
+
 **Note:** the real course texts are committed only once the organisation confirms they may be public (open decision, section 6). Until then the repo has placeholder content only.
 
 **Env (app):** no new app variable. `ADMIN_DATABASE_URL` is deliberately **not** added to `src/server/env.ts`, `env.1password` or Dokku.
