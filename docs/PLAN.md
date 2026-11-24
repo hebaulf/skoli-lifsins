@@ -52,7 +52,7 @@ These go beyond the generic checklist and are where an app like this usually goe
   - **Local development:** no plaintext `.env` file. The committed `env.1password` lists every variable: non-secrets as plain values (e.g. `APP_BASE_URL=http://localhost:3000`), secrets as references (e.g. `DATABASE_URL=op://skoli-lifsins/Neon/dev-url`). Start the app with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`); `op run` injects the values into the process only and masks them in its output. Lines for later phases stay commented out until that phase, because `op run` fails on references to items that don't exist yet. `tests/env-1password.test.ts` checks the file against `src/server/env.ts` without needing any secret.
   - **Server:** the values live in Dokku config (runtime env), set by me from 1Password with `op read` (see section 4). The command contains only the `op://` reference, so no secret ends up in shell history or in the repo.
   - **Claude Code** is denied `op` and `ssh`, never fetches or sets secrets, never asks for secret values in the chat, and adds new variables to `env.1password` as `op://` references only.
-  - **Admin database connection** (`ADMIN_DATABASE_URL`, Phase 5): used only by the answer seed script on my machine, passed in with `op run`. It is never in `env.1password`, `src/server/env.ts` or the Dokku config, so the running app can't write the answer key.
+  - **Admin database connection** (`ADMIN_DATABASE_URL`, owner role `neondb_owner`, Phase 2): used only by migrations and the db scripts (`db:migrate`, `db:set-app-password`, `db:check-grants`, later `seed:answers`) on my machine, passed in with `op run`. It is never in `env.1password`, `src/server/env.ts` or the Dokku config, so the running app can't change the schema or write the answer key.
   - Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image. Provider dashboards (Neon, Resend) are where values are created or rotated; they're copied into 1Password, never into files.
 
 ## 4. Repository, tooling and deployment
@@ -142,15 +142,61 @@ Then build the data access layer in src/server/dal/:
 Explain the schema and the authorization rules in a short table before writing code. Write tests for each rule: no session, wrong role, wrong owner.
 ```
 
-**Env:** make `DATABASE_URL` required in `src/server/env.ts` (remove `.optional()`) and uncomment its line in `env.1password`.
+**Status:** code done (schema, migrations, DAL, tests). The Neon steps A–D below are done by you.
 
-**1Password (you create before this phase):** item `Neon` in vault `skoli-lifsins`, fields `dev-url` (Neon dev branch, least-privilege app user) and `demo-url` (separate Neon branch for the demo server, least-privilege app user). Both with `sslmode=require`.
+**Decisions (implemented):**
 
-**Dokku (before deploying this phase):**
+- One group per student (`group_membership_one_group_per_student` unique constraint). Attempts store the score only, not the submitted answers.
+- Delete behaviour: deleting a student cascades to their membership, attempts, progress and diploma; deleting a teacher who owns groups is blocked (restrict); deleting a group cascades to its memberships and invitations. Documented in `src/server/db/schema.ts`, tested in `tests/dal.test.ts`.
+- Roles: the app connects as `app_runtime`, created by a migration with SQL (so it is **not** a member of `neon_superuser`, unlike roles created in the Neon console), with explicit per-table grants only (`src/server/db/grants.ts`): read/write on app tables, **SELECT only on `answer_key`**, no CREATE. Migrations and the answer seed use the owner role `neondb_owner` via `ADMIN_DATABASE_URL`, which never reaches the app or Dokku. `DATABASE_URL` must use `app_runtime` or the app refuses to start.
+- Grant matrix: `tests/db-grants.test.ts` runs all migrations in PGlite and compares `app_runtime`'s real privileges per table with the matrix, failing on any unlisted table or extra privilege. `pnpm db:check-grants` runs the same comparison against a real branch (step C), because Neon may differ from PGlite.
+- TLS: connection strings must use `sslmode=verify-full` (certificate and hostname verified by `pg`); `uselibpqcompat`, `ssl`, `sslcert`/`sslkey`/`sslrootcert` are rejected; the app also checks what `pg` will actually do before connecting, and enables channel binding in code.
+- Session: `{ userId, role, mfaVerified }`, built only on the server (Phase 3). Every admin-level DAL path requires role admin **and** `mfaVerified` (`MfaRequiredError` otherwise). Other people's data is `NotFoundError` (404).
+- Drizzle's query errors contain the SQL **and parameter values**: never log or show them raw (Phase 10 logging must account for this).
+
+**Neon and 1Password: your steps, in this order.** Never paste connection strings or passwords into Claude.
+
+A. **Dev branch first, while the database is still empty** (a branch copies its parent's roles and passwords).
+
+1. Neon console → your project → **Branches** → **Create branch**: name `dev`, parent `production`, include current data (not a point in time) → **Create**.
+2. Select branch **dev** → **Roles** → `neondb_owner` → **Reset password**. Roles are per branch, so only dev changes; dev and production now have different owner passwords. (`app_runtime` doesn't exist yet; each branch gets its own password for it in step C.)
+
+B. **1Password**, vault `skoli-lifsins`, item `Neon`, six fields:
+
+| Field               | How to fill it                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `demo-admin-url`    | Console → branch **production** → **Connect** → role `neondb_owner`, connection pooling **off** → copy the string straight into the field, then change `sslmode=require` to `sslmode=verify-full` (keep `channel_binding=require`)                                                                                                                                               |
+| `dev-admin-url`     | Same, branch **dev** (after the reset in A2)                                                                                                                                                                                                                                                                                                                                     |
+| `demo-app-password` | 1Password **password generator**: random, 40 characters, letters and digits only (symbols off)                                                                                                                                                                                                                                                                                   |
+| `dev-app-password`  | Generate a separate one, same settings                                                                                                                                                                                                                                                                                                                                           |
+| `demo-url`          | Copy `demo-admin-url` and edit it in 1Password: user `neondb_owner` → `app_runtime`; password → the `demo-app-password` value; host → the **pooled** host (add `-pooler` after the endpoint id, as the console shows with pooling on). Result shape: `postgresql://app_runtime:<password>@ep-…-pooler.<region>.aws.neon.tech/neondb?sslmode=verify-full&channel_binding=require` |
+| `dev-url`           | Same for dev, with `dev-app-password`                                                                                                                                                                                                                                                                                                                                            |
+
+C. **Per branch: migrate, set the app password, check.** Dev first, then demo (replace `dev` with `demo` in all three). `op run` resolves the `op://` references and masks secrets in the output.
+
+```sh
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm db:migrate
+
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+APP_DB_PASSWORD='op://skoli-lifsins/Neon/dev-app-password' \
+op run -- pnpm db:set-app-password
+
+ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+DATABASE_URL='op://skoli-lifsins/Neon/dev-url' \
+op run -- pnpm db:check-grants
+```
+
+`db:set-app-password` validates the password (letters and digits, 32+) before building the statement and never prints it. `db:check-grants` must end with `RESULT: all checks passed`. If the pooled `*-url` fails to log in, try the non-pooled host to tell a pooler issue apart from a password issue. These scripts need Node 24.
+
+D. **Dokku**, before pushing this phase (the new release refuses to start without it; the old one keeps running):
 
 ```sh
 v="$(op read 'op://skoli-lifsins/Neon/demo-url')" && [ -n "$v" ] && ssh dokku@vibe.smelltuher.is config:set s14 DATABASE_URL="$v"; unset v
 ```
+
+Local dev after step C: `pnpm dev:op` (uses `dev-url`).
+
+**Future schema changes:** new migration → run step C's migrate + check on **both** branches before deploying. A new table needs a grant migration and an entry in `src/server/db/grants.ts`, or the tests fail.
 
 ### Phase 3 – Authentication
 
@@ -165,6 +211,8 @@ Set up Better Auth with email + password:
 - 2FA (TOTP) required for admins, optional for teachers
 - A CLI seed script to create an admin from the terminal
 - A deny-by-default check: a helper that every page, server action and route handler uses, plus an explicit allow-list of public routes
+- The `role` column must never be settable through Better Auth sign-up or profile updates: configure it so additional fields are not accepted from input (`input: false`), set the role on the server only (from the sign-up path), and write tests that a sign-up or profile update carrying `role` (e.g. "admin") is rejected or ignored
+- Build the DAL `Session` (`userId`, `role`, `mfaVerified`) on the server from the auth session; `mfaVerified` only after a completed second factor
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
@@ -263,7 +311,7 @@ Verify by checking the built client bundle and network responses that no correct
 
 **Env (app):** no new app variable. `ADMIN_DATABASE_URL` is deliberately **not** added to `src/server/env.ts`, `env.1password` or Dokku.
 
-**1Password (you create before this phase):** in item `Neon`, fields `dev-admin-url` and `demo-admin-url`: connection strings for the admin role that may write the answer key (dev branch and demo branch), with `sslmode=require`.
+**1Password:** nothing new. The seed uses `dev-admin-url` / `demo-admin-url` from Phase 2 (owner role, `sslmode=verify-full`).
 
 **Answer file:** keep it outside the repo, e.g. `~/skoli-lifsins-private/answers.json` (best stored in 1Password as a document, exported only when seeding). Claude never opens it and never runs the seed against a real database.
 
