@@ -25,5 +25,8 @@ minimumReleaseAgeExclude: []
 # Only these packages may run install (postinstall) scripts. Everything else
 # is blocked, so a compromised dependency can't run code on install.
 allowBuilds:
+  # esbuild (via drizzle-kit): install script NOT allowed; its binary comes
+  # from the @esbuild/<platform> optional package, so it works without it.
+  esbuild: false
   sharp: true
   unrs-resolver: true
