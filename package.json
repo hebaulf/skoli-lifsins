@@ -20,9 +20,12 @@
     "db:migrate": "drizzle-kit migrate",
     "db:set-app-password": "node scripts/db/set-app-password.mts",
     "db:check-grants": "node scripts/db/check-grants.mts",
-    "prepare": "if [ -e .git ] && [ -z \"${CI:-}\" ]; then git config core.hooksPath .githooks; fi"
+    "prepare": "if [ -e .git ] && [ -z \"${CI:-}\" ]; then git config core.hooksPath .githooks; fi",
+    "admin:create": "node scripts/admin/create-admin.mts"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.25",
+    "better-auth": "^1.7.25",
     "drizzle-orm": "^0.45.4",
     "next": "^16.4.6",
     "pg": "^8.23.1",
