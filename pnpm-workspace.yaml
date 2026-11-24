@@ -1,0 +1,29 @@
+# pnpm settings for this project (pnpm 11 reads them from this file).
+
+# Supply-chain guard: never install a package version published less than
+# 7 days ago (value in minutes). Most malicious releases are detected and
+# pulled within hours or days, so waiting a week skips them. If the newest
+# version is too young, pnpm resolves the newest version that is old enough.
+minimumReleaseAge: 10080
+
+# Emergency bypass for an urgent security patch (e.g. a Next.js or React CVE
+# fix released today). Procedure:
+#   1. Confirm the advisory on the official source (GitHub Security Advisory,
+#      nextjs.org/blog, react.dev/blog) and note the exact fixed version.
+#   2. Add the EXACT package names below, e.g.
+#        minimumReleaseAgeExclude:
+#          - next
+#          - react
+#          - react-dom
+#   3. Install the exact fixed version:  pnpm add next@16.x.y
+#   4. Commit lockfile + this file together, citing the advisory.
+#   5. After 7 days, remove the entries again in a separate commit, so the
+#      gate protects those packages again.
+# Keep this list empty in normal operation.
+minimumReleaseAgeExclude: []
+
+# Only these packages may run install (postinstall) scripts. Everything else
+# is blocked, so a compromised dependency can't run code on install.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
