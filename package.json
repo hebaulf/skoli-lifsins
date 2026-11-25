@@ -21,7 +21,8 @@
     "db:set-app-password": "node scripts/db/set-app-password.mts",
     "db:check-grants": "node scripts/db/check-grants.mts",
     "prepare": "if [ -e .git ] && [ -z \"${CI:-}\" ]; then git config core.hooksPath .githooks; fi",
-    "admin:create": "node scripts/admin/create-admin.mts"
+    "admin:create": "node scripts/admin/create-admin.mts",
+    "check:ip-rate-limit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning scripts/check/ip-rate-limit.mts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.25",

@@ -294,7 +294,18 @@ auth_secret="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')" &&
     EMAIL_TRANSPORT=resend; unset auth_secret resend_key
 ```
 
-F. **After deploying, check the client-IP handling on the real server** (it depends on how the course nginx is configured). Request a password reset for an unknown address (`nobody@example.invalid`, so no email is sent) 11 times within an hour, each with a different made-up `X-Forwarded-For` header (e.g. with a browser extension or `curl -H` from your machine). The 11th must say "Of margar tilraunir" (too many attempts). If it doesn't, the spoofed header is being trusted: tell me before going further.
+F. **After deploying, check the client-IP handling on the real server** (it depends on how the course nginx is configured). Run from your machine (no secrets needed):
+
+```sh
+pnpm --silent check:ip-rate-limit
+```
+
+`scripts/check/ip-rate-limit.mts` submits the "forgot password" form 11 times, each with a **different** made-up address (`ip-check-<run>-<n>@example.invalid`, so the per-email limit of 3/hour never trips and no email is sent) and a **different** made-up `X-Forwarded-For` header, so only the per-IP limit (10/hour) can trip. It prints only the page's message per request.
+
+- **Expected:** requests 1–10 say "Ef aðgangur er til fyrir þetta netfang…", **request 11** says "Of margar tilraunir. Reyndu aftur síðar."
+- If request 11 is **not** refused, the spoofed header is being trusted: tell me before going further.
+- If it trips **earlier** than 11, your network already made reset requests in the current hour (the window is one hour from the first request): wait an hour and run it again.
+- "(unexpected response, HTTP …)" means the form submission didn't work as expected; send me the output.
 
 ### Phase 4 – Groups and invitations
 
