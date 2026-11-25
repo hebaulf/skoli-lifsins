@@ -5,7 +5,7 @@ import { checkConnectionUrl } from "./db/connection-url";
 /**
  * Server environment variables, validated with Zod.
  *
- * - Values come only from the runtime environment: Dokku config on the server,
+ * - Values come only from the runtime environment:
  *   `op run --env-file=env.1password` locally (1Password is the source of
  *   truth). Never from build args, files in the image or NEXT_PUBLIC_ variables.
  * - Variables belonging to later phases are optional until the phase that uses
@@ -50,13 +50,13 @@ export const envSchema = z
     // Required when EMAIL_TRANSPORT=resend (checked below).
     RESEND_API_KEY: nonEmpty.optional(),
     // Bare address only (e.g. no-reply@example.is). The display name
-    // "Skóli lífsins" lives in code (src/server/email-sender.ts), because the
-    // course Dokku server can't store values containing spaces.
+    // "Skóli lífsins" lives in code (src/server/email-sender.ts), because
+    // config values may not contain whitespace (see parseEnv).
     EMAIL_FROM: z.email(),
 
     // Not here on purpose: ADMIN_DATABASE_URL (migrations, db scripts, answer
     // seed). It's only ever passed to those scripts on the developer's machine
-    // via `op run` and must never reach the running app or the Dokku config.
+    // via `op run` and must never reach the running app.
   })
   .superRefine((env, ctx) => {
     // Zod 4 still runs this refinement when a field already failed, so only
@@ -109,9 +109,9 @@ const ENV_KEYS = Object.keys(envSchema.shape);
 
 /** Parse and validate an environment object. Throws EnvValidationError. */
 export function parseEnv(source: Record<string, string | undefined>): Env {
-  // No value may contain whitespace: the course Dokku server splits config
-  // values on spaces, and a stray space/newline from copy-paste is always a
-  // mistake. Reject it loudly at startup instead of trimming it silently.
+  // No value may contain whitespace: a stray space/newline from copy-paste is
+  // always a mistake (and some hosts split config values on spaces). Reject
+  // it loudly at startup instead of trimming it silently.
   const withWhitespace = ENV_KEYS.filter((key) => /\s/.test(source[key] ?? ""));
 
   const result = envSchema.safeParse(source);

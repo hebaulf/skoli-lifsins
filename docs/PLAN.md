@@ -1,6 +1,8 @@
 # Skóli lífsins – project plan
 
-Course project for "Secure use of AI for programming". This file holds the stack, the security decisions specific to this app, deployment notes and the phase-by-phase prompts. `CLAUDE.md` holds the rules that apply to every session.
+> **This repository is a local-only test setup.** It runs on a developer machine against the Neon `dev` branch, with emails printed to the terminal (`EMAIL_TRANSPORT=console`). Nothing is deployed. GitHub (`origin`, public) is the only remote; CI, Dependabot and the answer-file protections stay active. The real project will be set up again with work accounts: see section 7, "Before the real project".
+
+Course project for "Secure use of AI for programming". This file holds the stack, the security decisions specific to this app, repository and tooling notes and the phase-by-phase prompts. `CLAUDE.md` holds the rules that apply to every session.
 
 To run a phase in Claude Code: "Do Phase N from docs/PLAN.md." Plan first, wait for approval, then implement. One phase per session; review and commit after each.
 
@@ -21,16 +23,16 @@ To run a phase in Claude Code: "Do Phase N from docs/PLAN.md." Plan first, wait 
 
 ## 2. Stack
 
-| Part       | Choice                                                                              | Why                                                                                                                                                                 |
-| ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework  | Next.js (App Router, `output: "standalone"`), TypeScript strict, pnpm               | Familiar; standalone output runs as a small Node server in Docker                                                                                                   |
-| Database   | PostgreSQL on Neon (EU region) + Drizzle ORM                                        | Only reachable from the server, so no client-side database access or row-level-security pitfalls; parameterised queries by default                                  |
-| Auth       | Better Auth                                                                         | Runs in our own app and database; rate limiting, 2FA, organisations/invitations, admin plugin, Have I Been Pwned plugin; scrypt password hashing (OWASP-acceptable) |
-| Content    | Typed TypeScript files in the repo (`src/server/`, server-only); answer key in Neon | The repo is public: texts, questions and options can be committed, correct answers and explanations never; no extra service or token                                |
-| Email      | Resend (or Postmark), SPF/DKIM configured                                           | Invites, verification, password reset                                                                                                                               |
-| Validation | Zod                                                                                 | Server-side validation of every input                                                                                                                               |
-| Video      | Vimeo or YouTube privacy-enhanced mode                                              | Third-party embeds likely need cookie consent                                                                                                                       |
-| Hosting    | Dokku on the course server, built from the repo's Dockerfile                        | Course requirement                                                                                                                                                  |
+| Part       | Choice                                                                                                                            | Why                                                                                                                                                                 |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework  | Next.js (App Router, `output: "standalone"`), TypeScript strict, pnpm                                                             | Familiar; standalone output runs as a small Node server in Docker                                                                                                   |
+| Database   | PostgreSQL on Neon (EU region) + Drizzle ORM                                                                                      | Only reachable from the server, so no client-side database access or row-level-security pitfalls; parameterised queries by default                                  |
+| Auth       | Better Auth                                                                                                                       | Runs in our own app and database; rate limiting, 2FA, organisations/invitations, admin plugin, Have I Been Pwned plugin; scrypt password hashing (OWASP-acceptable) |
+| Content    | Typed TypeScript files in the repo (`src/server/`, server-only); answer key in Neon                                               | The repo is public: texts, questions and options can be committed, correct answers and explanations never; no extra service or token                                |
+| Email      | Console mode locally; Resend transport kept for the real project (verified domain, SPF/DKIM)                                      | Invites, verification, password reset                                                                                                                               |
+| Validation | Zod                                                                                                                               | Server-side validation of every input                                                                                                                               |
+| Video      | Vimeo or YouTube privacy-enhanced mode                                                                                            | Third-party embeds likely need cookie consent                                                                                                                       |
+| Hosting    | None (local test setup). The Dockerfile is kept and checked in CI; hosting for the real project is still to be chosen (section 7) | –                                                                                                                                                                   |
 
 Keep Next.js and React patched promptly; both had serious vulnerabilities in 2025. Never rely on Next.js middleware alone for authorization.
 
@@ -48,65 +50,37 @@ These go beyond the generic checklist and are where an app like this usually goe
 - **Data minimisation.** Store name, email, role, group membership and quiz results. No kennitala. Decide a retention period for old student accounts.
 - **Users under 18.** Some students are 16–17. Consent and privacy policy wording need checking with the organisation's data protection officer.
 - **Supply chain.** pnpm `minimumReleaseAge`, committed lockfile, every new dependency justified and approved, Dependabot, pnpm audit in CI. Urgent security patches can bypass the 7-day gate via `minimumReleaseAgeExclude`; the procedure is documented in `pnpm-workspace.yaml`.
-- **Secrets.** 1Password is the single source of truth, in the vault `skoli-lifsins`. Each secret is an item (e.g. `Neon`) with separate fields for development and the demo server (e.g. `dev-url` and `demo-url`), so a leaked dev value never unlocks the deployed app.
+- **Secrets.** 1Password is the single source of truth, in the vault `skoli-lifsins`. Each secret is an item (e.g. `Neon`) with `dev-…` fields (e.g. `dev-url`). The local test setup uses only the `dev` fields; the real project gets a new work vault (section 7).
   - **Local development:** no plaintext `.env` file. The committed `env.1password` lists every variable: non-secrets as plain values (e.g. `APP_BASE_URL=http://localhost:3000`), secrets as references (e.g. `DATABASE_URL=op://skoli-lifsins/Neon/dev-url`). Start the app with `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`); `op run` injects the values into the process only and masks them in its output. Lines for later phases stay commented out until that phase, because `op run` fails on references to items that don't exist yet. `tests/env-1password.test.ts` checks the file against `src/server/env.ts` without needing any secret.
-  - **Server:** the values live in Dokku config (runtime env), set by me from 1Password with `op read` (see section 4). The command contains only the `op://` reference, so no secret ends up in shell history or in the repo.
   - **Claude Code** is denied `op` and `ssh`, never fetches or sets secrets, never asks for secret values in the chat, and adds new variables to `env.1password` as `op://` references only.
-  - **Admin database connection** (`ADMIN_DATABASE_URL`, owner role `neondb_owner`, Phase 2): used only by migrations and the db scripts (`db:migrate`, `db:set-app-password`, `db:check-grants`, later `seed:answers`) on my machine, passed in with `op run`. It is never in `env.1password`, `src/server/env.ts` or the Dokku config, so the running app can't change the schema or write the answer key.
+  - **Admin database connection** (`ADMIN_DATABASE_URL`, owner role `neondb_owner`, Phase 2): used only by migrations and the db scripts (`db:migrate`, `db:set-app-password`, `db:check-grants`, later `seed:answers`) on my machine, passed in with `op run`. It is never in `env.1password` or `src/server/env.ts`, so the running app can't change the schema or write the answer key.
   - Nothing secret in `NEXT_PUBLIC_` variables, build args or the Docker image. Provider dashboards (Neon, Resend) are where values are created or rotated; they're copied into 1Password, never into files.
 
-## 4. Repository, tooling and deployment
+## 4. Repository and tooling
 
 ### Git remotes
 
-- `origin` → GitHub. Push here often. CI runs here.
-- `vibe` → Dokku (`dokku@vibe.smelltuher.is:s14`). Every push here builds and goes **live** at https://14.vibe.smelltuher.is/. Push only deliberate, reviewed versions: `git push vibe main`.
-- Claude Code is not allowed to push (see `.claude/settings.json`). Deploying is always a human decision.
+- `origin` → GitHub (**public**). Push here often. CI runs here. It is the only remote; there is no deployment target.
+- Claude Code is not allowed to push (see `.claude/settings.json`).
 
 ### Guardrails already in place
 
-- GitHub: 2FA on account, Dependabot alerts and security updates, secret scanning + push protection and CodeQL (if the repo is public), ruleset on `main` blocking force pushes and deletion. Add "require status checks" once CI exists.
+- GitHub: 2FA on account, Dependabot alerts and security updates, secret scanning + push protection and CodeQL (public repo), ruleset on `main` blocking force pushes and deletion. Add "require status checks" once CI exists.
 - **Versioned pre-commit hook** in `.githooks/pre-commit` (committed). It runs gitleaks on the staged changes with the repo's `.gitleaks.toml`, then `scripts/check-canary-lines.sh`. It fails with a clear message if gitleaks isn't installed or `.gitleaks.toml` is missing.
   - **Install:** install gitleaks (macOS: `brew install gitleaks`), then run `pnpm install` in the repo. The `prepare` script sets `git config core.hooksPath .githooks`. It does nothing when there's no `.git` (Docker build) or when `CI` is set. Check with `git config --get core.hooksPath` (should print `.githooks`).
   - Every clone needs this once. Never bypass the hook (`git commit --no-verify` / `-n`); CI is only the second layer and runs after the push.
 - `.claude/settings.json` denies reading `.env*`, `git push`, `ssh`, `curl`, `wget`, `op`.
 
-### Dokku notes
+### Running locally
 
-- Dokku builds from the Dockerfile in the repo root and runs the container.
-- **What I can run on the server:** `config:show` and `config:set` for `s14` (over `ssh dokku@vibe.smelltuher.is …`). **Not** port commands (`ports:*`).
-- **Command format (tested on the course server):**
-  - **No flags.** Nothing is accepted before the app name (`--no-restart` and `--encoded` are both denied). Always `config:set s14 KEY=value …`.
-  - **No spaces in any value.** The server splits values on spaces; `config:set` then rejects the whole command ("Invalid env pair") and sets nothing. So every config value must be a single word: e.g. `EMAIL_FROM` is the bare address and the display name lives in code. `src/server/env.ts` rejects whitespace in every variable, so a mistake fails loudly at startup.
-  - **Special characters without spaces are kept as-is** (tested: `a<c>d&e?f=g` was stored unchanged), so URLs with `?`, `&`, `=` and tokens work.
-  - [x] ~~TODO: test how the server handles quoting, spaces and special characters in values~~ Done: results above.
-- Server config is runtime env, set by me from 1Password. Secrets with `op read` (demo field), non-secrets as plain values:
+- `pnpm dev:op` (`op run --env-file=env.1password -- pnpm dev`): Neon `dev` branch as `app_runtime` with `sslmode=verify-full`, `EMAIL_TRANSPORT=console` (emails incl. links are printed to the terminal, nothing is sent). Console mode only starts with `NODE_ENV=development` and a localhost `APP_BASE_URL`.
+- The Neon `production` branch is no longer used: `app_runtime` login is disabled there.
 
-  ```sh
-  # One secret
-  v="$(op read 'op://skoli-lifsins/<item>/demo-<field>')" && [ -n "$v" ] && ssh dokku@vibe.smelltuher.is config:set s14 KEY="$v"; unset v
+### Docker
 
-  # Several secrets in one call: one shell variable per secret, all checked, all unset
-  a="$(op read 'op://skoli-lifsins/<item-a>/demo-<field>')" &&
-    b="$(op read 'op://skoli-lifsins/<item-b>/demo-<field>')" &&
-    [ -n "$a" ] && [ -n "$b" ] &&
-    ssh dokku@vibe.smelltuher.is config:set s14 KEY_A="$a" KEY_B="$b"; unset a b
-
-  # Non-secret
-  ssh dokku@vibe.smelltuher.is config:set s14 APP_BASE_URL=https://14.vibe.smelltuher.is
-  ```
-
-  Why this form: `&&` skips `ssh` if `op read` fails, `[ -n "$v" ]` skips it if the value came back empty, so the server never gets an empty value; `unset` removes the secret from the shell afterwards (it runs whether or not the `ssh` part ran). The commands contain only `op://` references, so no secret lands in shell history.
-
-- Because no flags are accepted (so no `--no-restart`), every `config:set` restarts the running app right away with the new value. Set several variables in one `config:set` call where possible, so the app restarts only once. The server output of a `config:set` shows that a restart runs pre-flight checks on the new container before swapping it in and shutting down the old one, and the `app.json` healthcheck on `/api/health` runs on restarts (confirmed: it ran and passed). So a restart that fails its checks should leave the old container running.
-  - [x] ~~TODO: verify the failure case once on purpose~~ Done. Set `APP_BASE_URL=not-a-url`: the new container failed the `/api/health` check, Dokku aborted the restart ("Could not start due to 1 failed checks"), the old container kept serving (health check from outside returned ok), and the error log named only the variable, not its value. Correct value restored. **Confirmed:** a bad config value can't take the running app down; it only blocks the restart.
-- Check config with `ssh dokku@vibe.smelltuher.is config:show s14`; note that this prints the values, so don't share its output (and don't paste it into Claude).
-- Currently required on the server: `APP_BASE_URL`. Each later phase below lists what it adds.
-- `PORT` must not be set in Dokku config (it would override `PORT=8080` from the image). Check with `config:show`.
-- The container must: run as non-root, listen on `PORT` on `0.0.0.0`, have a HEALTHCHECK, and contain only the standalone build output.
-- **Port 8080 is fixed.** The course server maps the app to container port 8080 (set up for the original `nginx-unprivileged` image), and students can't change port settings (`dokku ports:*` is not available to us). The Dockerfile therefore uses `EXPOSE 8080` and `PORT=8080`; the HEALTHCHECK, `app.json` and CI check that port. Don't change it.
+- The Dockerfile and its CI checks are kept (multi-stage, non-root, only the standalone output, offline build after `deps`, no package managers in the runtime image, Trivy). The container listens on `PORT=8080` (a leftover from the course server; kept because changing it gains nothing).
 - `.dockerignore` must exclude `.env*`, `env.1password`, `.git`, `node_modules`, tests and source maps.
-- The site is public the moment it's pushed: the domain is in certificate transparency logs and gets scanned automatically. Only test data until Phase 11 passes.
+- **Config values must not contain whitespace** (`src/server/env.ts` rejects it at startup). Originally because the course server split values on spaces; kept because a stray space or newline in a secret is always a mistake. So e.g. `EMAIL_FROM` is the bare address and the display name lives in code.
 
 ---
 
@@ -115,19 +89,19 @@ These go beyond the generic checklist and are where an app like this usually goe
 ### Phase 1 – Project scaffold and tooling
 
 ```
-This folder currently contains an index.html and a Dockerfile used for Dokku deployment; read both first and explain what they do.
+This folder currently contains an index.html and a Dockerfile; read both first and explain what they do.
 Then set up the project skeleton in this folder:
 - Next.js (latest stable, App Router, output: "standalone"), TypeScript strict, pnpm, ESLint, Prettier
 - pnpm config with minimumReleaseAge so newly published package versions aren't installed immediately; commit the lockfile
 - Replace the Dockerfile with a multi-stage build: install and build in one stage, run from a small final image containing only the standalone output; run as a non-root user; listen on the PORT env variable on 0.0.0.0; add a HEALTHCHECK
 - A .dockerignore that excludes .env*, .git, node_modules, tests and source maps
-- No secrets as build args or in the image; server secrets are read at runtime from env variables set in Dokku
+- No secrets as build args or in the image; server secrets are read at runtime from env variables
 - Extend .gitignore; env.1password listing every variable we'll need (plain values for non-secrets, op:// references for secrets, never real secret values) — replaced the original .env.example, see section 3
 - An env validation module (Zod) that fails at startup if a required server variable is missing
-- A simple placeholder start page (no login yet) so the first deploy shows nothing sensitive
+- A simple placeholder start page (no login yet)
 - GitHub Actions workflow running: typecheck, lint, tests, pnpm audit, Semgrep, gitleaks, and a Docker image scan with Trivy
 - Folder structure with src/server/dal/ for all data access
-Show the plan and the list of packages you want to install before doing anything. Tell me exactly which Dokku config variables need to be set and the commands to set them. Do not push; I deploy with `git push vibe main` myself.
+Show the plan and the list of packages you want to install before doing anything. Do not push.
 ```
 
 ### Phase 2 – Database schema and data access layer
@@ -142,37 +116,31 @@ Then build the data access layer in src/server/dal/:
 Explain the schema and the authorization rules in a short table before writing code. Write tests for each rule: no session, wrong role, wrong owner.
 ```
 
-**Status:** code done (schema, migrations, DAL, tests). The Neon steps A–D below are done by you.
+**Status:** code done (schema, migrations, DAL, tests). Neon steps below are done by you (dev branch only).
 
 **Decisions (implemented):**
 
 - One group per student (`group_membership_one_group_per_student` unique constraint). Attempts store the score only, not the submitted answers.
 - Delete behaviour: deleting a student cascades to their membership, attempts, progress and diploma; deleting a teacher who owns groups is blocked (restrict); deleting a group cascades to its memberships and invitations. Documented in `src/server/db/schema.ts`, tested in `tests/dal.test.ts`.
-- Roles: the app connects as `app_runtime`, created by a migration with SQL (so it is **not** a member of `neon_superuser`, unlike roles created in the Neon console), with explicit per-table grants only (`src/server/db/grants.ts`): read/write on app tables, **SELECT only on `answer_key`**, no CREATE. Migrations and the answer seed use the owner role `neondb_owner` via `ADMIN_DATABASE_URL`, which never reaches the app or Dokku. `DATABASE_URL` must use `app_runtime` or the app refuses to start.
-- Grant matrix: `tests/db-grants.test.ts` runs all migrations in PGlite and compares `app_runtime`'s real privileges per table with the matrix, failing on any unlisted table or extra privilege. `pnpm db:check-grants` runs the same comparison against a real branch (step C), because Neon may differ from PGlite.
+- Roles: the app connects as `app_runtime`, created by a migration with SQL (so it is **not** a member of `neon_superuser`, unlike roles created in the Neon console), with explicit per-table grants only (`src/server/db/grants.ts`): read/write on app tables, **SELECT only on `answer_key`**, no CREATE. Migrations and the answer seed use the owner role `neondb_owner` via `ADMIN_DATABASE_URL`, which never reaches the app. `DATABASE_URL` must use `app_runtime` or the app refuses to start.
+- Grant matrix: `tests/db-grants.test.ts` runs all migrations in PGlite and compares `app_runtime`'s real privileges per table with the matrix, failing on any unlisted table or extra privilege. `pnpm db:check-grants` runs the same comparison against the real dev branch (step C), because Neon may differ from PGlite.
 - TLS: connection strings must use `sslmode=verify-full` (certificate and hostname verified by `pg`); `uselibpqcompat`, `ssl`, `sslcert`/`sslkey`/`sslrootcert` are rejected; the app also checks what `pg` will actually do before connecting, and enables channel binding in code.
 - Session: `{ userId, role, mfaVerified }`, built only on the server (Phase 3). Every admin-level DAL path requires role admin **and** `mfaVerified` (`MfaRequiredError` otherwise). Other people's data is `NotFoundError` (404).
-- Drizzle's query errors contain the SQL **and parameter values**: never log or show them raw (Phase 10 logging must account for this).
+- Drizzle's query errors contain the SQL **and parameter values**: never log or show them raw. Done: sanitized error logging (`src/server/log/safe-log.ts`); broader logging is Phase 10.
 
-**Neon and 1Password: your steps, in this order.** Never paste connection strings or passwords into Claude.
+**Neon and 1Password: your steps** (done for the dev branch). Never paste connection strings or passwords into Claude.
 
-A. **Dev branch first, while the database is still empty** (a branch copies its parent's roles and passwords).
+A. **Dev branch** in the Neon project (EU region), created while the database was still empty, with its own `neondb_owner` password (**Roles** → `neondb_owner` → **Reset password** on branch `dev`; roles are per branch).
 
-1. Neon console → your project → **Branches** → **Create branch**: name `dev`, parent `production`, include current data (not a point in time) → **Create**.
-2. Select branch **dev** → **Roles** → `neondb_owner` → **Reset password**. Roles are per branch, so only dev changes; dev and production now have different owner passwords. (`app_runtime` doesn't exist yet; each branch gets its own password for it in step C.)
+B. **1Password**, vault `skoli-lifsins`, item `Neon`:
 
-B. **1Password**, vault `skoli-lifsins`, item `Neon`, six fields:
+| Field              | How to fill it                                                                                                                                                                                                                                                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev-admin-url`    | Console → branch **dev** → **Connect** → role `neondb_owner`, connection pooling **off** → copy into the field, then change `sslmode=require` to `sslmode=verify-full` (keep `channel_binding=require`)                                                                                                                       |
+| `dev-app-password` | 1Password **password generator**: random, 40 characters, letters and digits only (symbols off)                                                                                                                                                                                                                                |
+| `dev-url`          | Copy `dev-admin-url` and edit it in 1Password: user `neondb_owner` → `app_runtime`; password → the `dev-app-password` value; host → the **pooled** host (`-pooler` after the endpoint id). Shape: `postgresql://app_runtime:<password>@ep-…-pooler.<region>.aws.neon.tech/neondb?sslmode=verify-full&channel_binding=require` |
 
-| Field               | How to fill it                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `demo-admin-url`    | Console → branch **production** → **Connect** → role `neondb_owner`, connection pooling **off** → copy the string straight into the field, then change `sslmode=require` to `sslmode=verify-full` (keep `channel_binding=require`)                                                                                                                                               |
-| `dev-admin-url`     | Same, branch **dev** (after the reset in A2)                                                                                                                                                                                                                                                                                                                                     |
-| `demo-app-password` | 1Password **password generator**: random, 40 characters, letters and digits only (symbols off)                                                                                                                                                                                                                                                                                   |
-| `dev-app-password`  | Generate a separate one, same settings                                                                                                                                                                                                                                                                                                                                           |
-| `demo-url`          | Copy `demo-admin-url` and edit it in 1Password: user `neondb_owner` → `app_runtime`; password → the `demo-app-password` value; host → the **pooled** host (add `-pooler` after the endpoint id, as the console shows with pooling on). Result shape: `postgresql://app_runtime:<password>@ep-…-pooler.<region>.aws.neon.tech/neondb?sslmode=verify-full&channel_binding=require` |
-| `dev-url`           | Same for dev, with `dev-app-password`                                                                                                                                                                                                                                                                                                                                            |
-
-C. **Per branch: migrate, set the app password, check.** Dev first, then demo (replace `dev` with `demo` in all three). `op run` resolves the `op://` references and masks secrets in the output.
+C. **Migrate, set the app password, check.** `op run` resolves the `op://` references and masks secrets in the output.
 
 ```sh
 ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm db:migrate
@@ -186,17 +154,11 @@ DATABASE_URL='op://skoli-lifsins/Neon/dev-url' \
 op run -- pnpm db:check-grants
 ```
 
-`db:set-app-password` validates the password (letters and digits, 32+) before building the statement and never prints it. `db:check-grants` must end with `RESULT: all checks passed`. If the pooled `*-url` fails to log in, try the non-pooled host to tell a pooler issue apart from a password issue. These scripts need Node 24.
-
-D. **Dokku**, before pushing this phase (the new release refuses to start without it; the old one keeps running):
-
-```sh
-v="$(op read 'op://skoli-lifsins/Neon/demo-url')" && [ -n "$v" ] && ssh dokku@vibe.smelltuher.is config:set s14 DATABASE_URL="$v"; unset v
-```
+`db:set-app-password` validates the password (letters and digits, 32+) before building the statement and never prints it. `db:check-grants` must end with `RESULT: all checks passed`. If the pooled `dev-url` fails to log in, try the non-pooled host to tell a pooler issue apart from a password issue. These scripts need Node 24.
 
 Local dev after step C: `pnpm dev:op` (uses `dev-url`).
 
-**Future schema changes:** new migration → run step C's migrate + check on **both** branches before deploying. A new table needs a grant migration and an entry in `src/server/db/grants.ts`, or the tests fail.
+**Future schema changes:** new migration → run step C's migrate + check on the dev branch. A new table needs a grant migration and an entry in `src/server/db/grants.ts`, or the tests fail.
 
 ### Phase 3 – Authentication
 
@@ -216,50 +178,49 @@ Set up Better Auth with email + password:
 Before coding, list the decisions you're making and anything I need to decide.
 ```
 
-**Status:** code done. Your steps A–E below.
+**Status:** code done. Your steps A–C below (dev branch).
 
 **Decisions (implemented):**
 
 - **All auth flows are server actions** (`src/app/_actions/auth.ts` → `src/server/auth/flows.ts`). They validate with Zod, rate-limit, check the password policy themselves (so results don't depend on whether the email exists), pass only constant redirect targets, and return fixed codes. The Better Auth HTTP route forwards only the two email-link GETs (`/api/auth/verify-email`, `/api/auth/reset-password/<token>`); everything else is 404 (`src/server/auth/http-allowlist.ts`).
 - **Rate limits** in our own Postgres table (`auth_rate_limit`, HMAC-hashed keys, no raw emails/IPs), because Better Auth's limiter doesn't cover server-side calls: sign-in 5/15 min per email and 20/15 min per IP; sign-up 3/hour per IP; reset request 3/hour per email and 10/hour per IP; reset 10/hour per IP; 2FA sign-in 10/15 min per IP; 2FA setup and password change 5/15 min per user. Emails triggered by sign-up are limited **per recipient** (verification 3/day, "account already exists" 2/day, reset 5/day), so the forms can't flood an inbox.
-- **Client IP:** only the **last** `X-Forwarded-For` entry is used, the one Dokku's nginx adds; client-supplied values end up to the left and are ignored (`src/server/auth/client-ip.ts`, tested with spoofed headers). Better Auth's own IP tracking is off (no IPs stored on sessions).
+- **Client IP:** only the **last** `X-Forwarded-For` entry is used, the one the reverse proxy adds; client-supplied values end up to the left and are ignored (`src/server/auth/client-ip.ts`, tested with spoofed headers). Better Auth's own IP tracking is off (no IPs stored on sessions). **This trust model was designed for the course server's Dokku nginx (one proxy that sets or appends the header). It must be revisited for the real project's host** (other proxies, CDNs or load balancers change which entry is trustworthy); see section 7.
 - **Roles:** `role` has `input: false` (ignored on sign-up, rejected on profile update); the sign-up path sets student/teacher on the server; a **database trigger** stops the app role from ever creating or promoting an admin. Admins only via `pnpm admin:create`.
 - **Passwords:** 12–128 characters; Have I Been Pwned (only a 5-character SHA-1 prefix leaves the server) **fails closed**: if the API is unreachable, sign-up/reset/change is refused with "try again in a moment" and a warning is logged (never the password or hash).
 - **Links:** built from `APP_BASE_URL` (never the Host header). Verification links expire in 24 hours, reset links in 15 minutes and are single use. Password reset revokes **all** sessions; password change revokes all **other** sessions.
 - **No enumeration:** sign-up answers the same for new and existing emails (existing users get a notice by email, or a fresh verification link if never verified); sign-in gives one message for wrong password, unknown and unverified email; reset always says "if an account exists…". Emails are sent in the background.
 - **Sessions:** cookies `__Secure-`, HttpOnly, Secure, SameSite=Lax. Lifetimes are **absolute** (activity never extends them): 7 days for students and teachers, **12 hours for admins** (set in the session-create hook and re-checked in `requireUser`). No cookie cache, so role changes apply immediately.
 - **2FA (TOTP):** required for admins (an admin without it can only reach the setup page), optional for teachers. "Trust this device" is never used. Enabling 2FA deletes all the user's sessions, so any session of a 2FA user passed the second factor (that's what `mfaVerified` relies on). No QR code (no extra dependency): authenticator apps take the setup key.
-- **TOTP secrets and backup codes are stored encrypted** (Better Auth default: XChaCha20-Poly1305, key derived from `BETTER_AUTH_SECRET`), not hashed. Accepted because: reading them needs both a database dump and `BETTER_AUTH_SECRET` (different systems: Neon vs Dokku config); they're only the second factor (the password is still needed); an attacker with both already has a full compromise; and hashing them would need custom code relying on plugin internals in the 2FA path.
+- **TOTP secrets and backup codes are stored encrypted** (Better Auth default: XChaCha20-Poly1305, key derived from `BETTER_AUTH_SECRET`), not hashed. Accepted because: reading them needs both a database dump and `BETTER_AUTH_SECRET` (different systems: Neon vs the host's runtime config); they're only the second factor (the password is still needed); an attacker with both already has a full compromise; and hashing them would need custom code relying on plugin internals in the 2FA path.
 - **Deny by default:** `requireUser()`/`requireRole()` in every protected page and action; public routes and actions are allow-listed in `src/server/auth/public-routes.ts`; `tests/deny-by-default.test.ts` fails on any page, route or action that is neither. `src/proxy.ts` only redirects visitors without a session cookie (convenience, not a check).
-- **Email modes:** `EMAIL_TRANSPORT=resend` (default; logs only "email sent: <kind>") or `console` (prints the email incl. links to the local terminal, sends nothing). The app **refuses to start** with `console` unless `NODE_ENV=development` AND `APP_BASE_URL` is localhost.
+- **Email modes:** `EMAIL_TRANSPORT=console` (used in this local setup: prints the email incl. links to the local terminal, sends nothing) or `resend` (the default when unset; kept with its tests for the real project; logs only "email sent: <kind>"; `RESEND_API_KEY` is required only in this mode). The app **refuses to start** with `console` unless `NODE_ENV=development` AND `APP_BASE_URL` is localhost.
 - Teacher sign-up is open until the Phase 4 decision. Better Auth telemetry is off.
 
 **Known trade-offs:**
 
 - **Per-email login limits allow targeted lockout:** anyone who knows a user's email can make 5 failed sign-ins and keep that user locked out of password sign-in for up to 15 minutes at a time. Accepted for now (the alternative, no per-email limit, allows password guessing spread over many IPs). Revisit in Phase 10 if it becomes a problem (e.g. CAPTCHA after failures, or a sign-in link by email).
 - Sessions are absolute: students and teachers sign in again after 7 days even if active.
-- Resend free plan without a verified domain: emails reach **only your own address**. On the demo server only you can verify an account; test other users locally with `EMAIL_TRANSPORT=console`.
+- No email is actually sent in this local setup; verification and reset links are read from the terminal.
 
 **`BETTER_AUTH_SECRET` must never be rotated by simply replacing it.** It encrypts TOTP secrets and backup codes; a new value makes all of them unreadable (every 2FA user, including the admin, would be locked out of 2FA) and signs everyone out. If rotation is ever needed, use Better Auth's key-version mechanism:
 
-1. Generate a new value in 1Password (e.g. `BetterAuth/demo-secret-v2`, 64 letters/digits).
+1. Generate a new value in 1Password (e.g. `BetterAuth/dev-secret-v2`, 64 letters/digits).
 2. Code change (its own commit, with tests): add `BETTER_AUTH_SECRETS` to `src/server/env.ts` (and `SECRET_ENV_KEYS`, `env.1password`) and pass it to Better Auth as `secrets: [{ version: 2, value: <new> }]`, **keeping** `BETTER_AUTH_SECRET` as the legacy key. New data is encrypted with version 2; existing data still decrypts with the legacy key.
-3. Set it on Dokku: `BETTER_AUTH_SECRETS=2:<new value>` (no spaces; use the `op read` pattern), keep `BETTER_AUTH_SECRET` unchanged. Everyone is signed out once (cookies are signed with the current version).
+3. Provide it as runtime env `BETTER_AUTH_SECRETS=2:<new value>` (no spaces; from 1Password via `op run` locally, or the host's secret config), keep `BETTER_AUTH_SECRET` unchanged. Everyone is signed out once (cookies are signed with the current version).
 4. The old secret can only be removed after every 2FA user has re-enrolled (Better Auth doesn't re-encrypt old rows). Until then, keep both.
 
-**Your steps:**
+**Your steps** (dev branch):
 
-A. **Resend** (twice: dev and demo). API Keys → **Create API Key** → name `skoli-lifsins-dev` (then `skoli-lifsins-demo`), permission **Sending access**, domain **All domains** (the only option without a verified domain) → copy the key **directly** into 1Password (shown once).
+A. **1Password**, vault `skoli-lifsins`:
 
-B. **1Password**, vault `skoli-lifsins`:
+| Item         | Fields                                                                                                                                                                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BetterAuth` | `dev-secret`: generator, 64 characters, letters and digits only                                                                                                                                                                                                  |
+| `Admin`      | `email` (your address); `dev-password`: generator, 40 characters, letters and digits. **No TOTP field**: you use a separate authenticator app for the admin. Put the **backup codes** shown at 2FA setup in this item (a "Backup codes" text field or the notes) |
 
-| Item         | Fields                                                                                                                                                                                                                                                                                                |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BetterAuth` | `dev-secret`, `demo-secret`: generator, 64 characters, letters and digits only                                                                                                                                                                                                                        |
-| `Resend`     | `dev-api-key`, `demo-api-key`: from step A                                                                                                                                                                                                                                                            |
-| `Admin`      | `email` (your address); `dev-password`, `demo-password`: generator, 40 characters, letters and digits. **No TOTP field**: you use a separate authenticator app for the admin. Put the **backup codes** shown at 2FA setup in this item (a "Backup codes" text field or the notes), one set per branch |
+No Resend item is needed locally (`EMAIL_TRANSPORT=console`; `RESEND_API_KEY` stays commented out in `env.1password`).
 
-C. **Migrate both branches** (dev first, then demo), as in Phase 2:
+B. **Migrate and check** the dev branch:
 
 ```sh
 ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm db:migrate
@@ -269,7 +230,7 @@ DATABASE_URL='op://skoli-lifsins/Neon/dev-url' \
 op run -- pnpm db:check-grants
 ```
 
-D. **Create the admin** on each branch (dev, then demo):
+C. **Create the admin:**
 
 ```sh
 ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
@@ -279,33 +240,15 @@ ADMIN_PASSWORD='op://skoli-lifsins/Admin/dev-password' \
 op run -- pnpm admin:create
 ```
 
-Then sign in (`pnpm dev:op` for dev): you're sent to the 2FA page. Add the setup key to your authenticator app, save the backup codes in the `Admin` item, confirm with a code, sign in again with a code.
+Then `pnpm dev:op` and sign in: you're sent to the 2FA page. Add the setup key to your authenticator app, save the backup codes in the `Admin` item, confirm with a code, sign in again with a code.
 
-E. **Dokku** (before pushing this phase):
-
-```sh
-auth_secret="$(op read 'op://skoli-lifsins/BetterAuth/demo-secret')" &&
-  resend_key="$(op read 'op://skoli-lifsins/Resend/demo-api-key')" &&
-  [ -n "$auth_secret" ] && [ -n "$resend_key" ] &&
-  ssh dokku@vibe.smelltuher.is config:set s14 \
-    BETTER_AUTH_SECRET="$auth_secret" \
-    RESEND_API_KEY="$resend_key" \
-    EMAIL_FROM=onboarding@resend.dev \
-    EMAIL_TRANSPORT=resend; unset auth_secret resend_key
-```
-
-F. **After deploying, check the client-IP handling on the real server** (it depends on how the course nginx is configured). Run from your machine (no secrets needed):
+**Client-IP check script (for a deployed instance):** `scripts/check/ip-rate-limit.mts` checks whether a deployed server ignores a client-supplied `X-Forwarded-For`. Not applicable locally (there is no proxy); kept for the real project. The target URL is a required argument:
 
 ```sh
-pnpm --silent check:ip-rate-limit
+pnpm --silent check:ip-rate-limit https://<deployed-site>
 ```
 
-`scripts/check/ip-rate-limit.mts` submits the "forgot password" form 11 times, each with a **different** made-up address (`ip-check-<run>-<n>@example.invalid`, so the per-email limit of 3/hour never trips and no email is sent) and a **different** made-up `X-Forwarded-For` header, so only the per-IP limit (10/hour) can trip. It prints only the page's message per request.
-
-- **Expected:** requests 1–10 say "Ef aðgangur er til fyrir þetta netfang…", **request 11** says "Of margar tilraunir. Reyndu aftur síðar."
-- If request 11 is **not** refused, the spoofed header is being trusted: tell me before going further.
-- If it trips **earlier** than 11, your network already made reset requests in the current hour (the window is one hour from the first request): wait an hour and run it again.
-- "(unexpected response, HTTP …)" means the form submission didn't work as expected; send me the output.
+It submits the "forgot password" form 11 times, each with a **different** made-up address (`ip-check-<run>-<n>@example.invalid`, so the per-email limit of 3/hour never trips and no email is sent) and a **different** made-up `X-Forwarded-For` header, so only the per-IP limit (10/hour) can trip. It prints only the page's message per request. **Expected:** requests 1–10 say "Ef aðgangur er til fyrir þetta netfang…", **request 11** says "Of margar tilraunir. Reyndu aftur síðar." If request 11 is not refused, the spoofed header is trusted. If it trips earlier, the network already made reset requests that hour.
 
 ### Phase 4 – Groups and invitations
 
@@ -340,7 +283,7 @@ Answer key in Neon (table from Phase 2: question id, correct option id, explanat
 - It validates the file with Zod against the content: every question has exactly one answer, every option id exists for its question, no unknown question ids
 - It upserts everything in one transaction (all or nothing)
 - It prints only counts (e.g. chapters, questions, inserted/updated), never answers or explanations
-- It connects with a separate admin connection string, ADMIN_DATABASE_URL, read only by the seed script (not in src/server/env.ts, env.1password or Dokku). The app's runtime database user has SELECT only on the answer key table. Both connection strings come from 1Password via op run
+- It connects with a separate admin connection string, ADMIN_DATABASE_URL, read only by the seed script (not in src/server/env.ts or env.1password). The app's runtime database user has SELECT only on the answer key table. Both connection strings come from 1Password via op run
 
 Rules:
 - Fail closed: a chapter whose questions don't all have an answer in the database can't be taken, and the admin overview (Phase 8) shows a warning for it
@@ -381,23 +324,17 @@ Verify by checking the built client bundle and network responses that no correct
 
 **Note:** the real course texts are committed only once the organisation confirms they may be public (open decision, section 6). Until then the repo has placeholder content only.
 
-**Env (app):** no new app variable. `ADMIN_DATABASE_URL` is deliberately **not** added to `src/server/env.ts`, `env.1password` or Dokku.
+**Env (app):** no new app variable. `ADMIN_DATABASE_URL` is deliberately **not** added to `src/server/env.ts` or `env.1password`.
 
-**1Password:** nothing new. The seed uses `dev-admin-url` / `demo-admin-url` from Phase 2 (owner role, `sslmode=verify-full`).
+**1Password:** nothing new. The seed uses `dev-admin-url` from Phase 2 (owner role, `sslmode=verify-full`).
 
 **Answer file:** keep it outside the repo, e.g. `~/skoli-lifsins-private/answers.json` (best stored in 1Password as a document, exported only when seeding). Claude never opens it and never runs the seed against a real database.
 
 **Seeding (you run it yourself):** `op run` resolves the `op://` reference in the environment variable, so the connection string never appears on screen or in shell history.
 
 ```sh
-# dev database
 ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' op run -- pnpm seed:answers ~/skoli-lifsins-private/answers.json
-
-# demo database (used by https://14.vibe.smelltuher.is/)
-ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/demo-admin-url' op run -- pnpm seed:answers ~/skoli-lifsins-private/answers.json
 ```
-
-**Dokku:** nothing to set in this phase.
 
 ### Phase 6 – Student course flow
 
@@ -457,12 +394,12 @@ Read docs/before-you-deploy-checklist.pdf. Harden the app:
 - No CORS wildcard; no source maps served in production; debug off
 - Open redirect protection on any ?next= / callback parameter
 - Resource limits: max page sizes and search lengths
-- Make sure the app reads the real client IP correctly behind the Dokku/nginx proxy (for rate limiting and logs) and can't be fooled by a spoofed X-Forwarded-For header
+- Make sure the app reads the real client IP correctly behind the real host's proxy (for rate limiting and logs) and can't be fooled by a spoofed X-Forwarded-For header (the current logic assumes one nginx proxy; see section 7)
 - Structured logging and alerts for repeated failed logins and errors, minimising personal data (IP addresses count)
 Then go through the checklist item by item and give me a table: item, status (done / not applicable / missing), and where it's handled in the code.
 ```
 
-**Env:** no new required variable unless logging/alerting needs one (e.g. an alert webhook URL); if so, add it to `src/server/env.ts` (and `SECRET_ENV_KEYS`) and to `env.1password` as an `op://` reference, and give me the 1Password item/fields (dev and demo) to create and the exact `config:set` command for the demo value.
+**Env:** no new required variable unless logging/alerting needs one (e.g. an alert webhook URL); if so, add it to `src/server/env.ts` (and `SECRET_ENV_KEYS`) and to `env.1password` as an `op://` reference, and give me the 1Password item/field (`dev-…`) to create.
 
 ### Phase 11 – Access-control test sweep
 
@@ -481,17 +418,17 @@ Security audit this codebase, output to ~/audits/skoli-lifsins.
 Focus especially on: access control between teachers, students and admins; quiz answer exposure and grading bypass; correct answers or explanations committed to the public repo (including git history); invitation tokens; authentication flows; secrets in the client bundle.
 ```
 
-Run it at least twice. Fix confirmed findings, check each "needs validation" item manually. Also run OWASP ZAP against the deployed test site.
+Run it at least twice. Fix confirmed findings, check each "needs validation" item manually. Also run OWASP ZAP against the running app (locally now; against the deployed site in the real project).
 
 **Env:** no new required variable.
 
 ### Phase 13 – Pre-deploy and legal
 
 ```
-Read docs/before-you-deploy-checklist.pdf. Prepare for production:
-- Dokku: confirm HTTPS-only with redirect from HTTP, memory/CPU limits on the app, zero-downtime deploys with the healthcheck, and that only the web port is exposed
+Read docs/before-you-deploy-checklist.pdf. Prepare for production (applies to the real project; see section 7):
+- Hosting: confirm HTTPS-only with redirect from HTTP, memory/CPU limits on the app, zero-downtime deploys with the healthcheck, and that only the web port is exposed
 - Run Trivy on the final image and fix anything high or critical
-- Confirm that /.git, /.env, source maps and the old index.html are not reachable on https://14.vibe.smelltuher.is/
+- Confirm that /.git, /.env and source maps are not reachable on the deployed site
 - Backups: show me how to restore a Neon backup to a test branch, and let me try it
 - A list of every third party that sees user data (hosting, database, email, video) and whether we need a DPA with each
 - Data export and deletion for a user
@@ -500,7 +437,7 @@ Read docs/before-you-deploy-checklist.pdf. Prepare for production:
 Give me a final go/no-go list.
 ```
 
-**Env:** confirm every variable in `src/server/env.ts` is required (none left `.optional()`), every line in `env.1password` is active, and every variable is set in Dokku from the `demo-…` fields (check names with `config:show`, without sharing its output). If a real production environment follows the demo, it gets its own `prod-…` fields.
+**Env:** confirm every variable in `src/server/env.ts` is required where it should be, and that the real host gets its values from the work vault (section 7), never from the local `dev-…` fields.
 
 ---
 
@@ -510,7 +447,19 @@ Give me a final go/no-go list.
 - [ ] Organisation confirms the real course texts (chapter texts, questions, options) may be public, before they're committed. Until then: placeholder content only.
 - [x] Content platform: resolved, Sanity dropped. Content is typed TypeScript in the repo; answer key in Neon.
 - [ ] Teacher account approval: open sign-up, admin approval, or allowed email domains
-- [x] Dokku access: resolved. I can run `config:show` and `config:set` for s14; not port commands. The app listens on container port 8080 to match the existing mapping.
+- [x] Deployment: resolved, none. This repo is a local-only test setup; the course server deployment was dropped. Hosting for the real project is in section 7.
 - [ ] Retention period for inactive student accounts
 - [ ] Video provider (Vimeo or YouTube privacy-enhanced)
 - [ ] Under-18 consent and privacy policy wording (with the organisation's DPO)
+
+## 7. Before the real project
+
+This repository proves the approach locally. The real project is set up again with **work accounts**, not by deploying this repo. Redo, at minimum:
+
+- [ ] **GitHub:** new repository in the organisation's GitHub org, with the same protections (2FA, branch ruleset, secret scanning and push protection, Dependabot, CodeQL, CI as required status checks, the versioned pre-commit hook and answer-file checks). Decide public or private; if public, the answer-key rules apply unchanged.
+- [ ] **Neon:** new project (EU region) under the organisation's account; branches and roles set up as in Phase 2 (owner vs `app_runtime`, grant check), with credentials that never existed in this test setup.
+- [ ] **Secrets:** new values in a **work 1Password vault** (BetterAuth secret, database URLs, email API key, admin account). Nothing from the `skoli-lifsins` test vault is reused.
+- [ ] **Hosting:** choose a host with an **EU region**, HTTPS only, secrets as runtime config (never build args), healthcheck-gated deploys. **Review the proxy/IP trust** in `src/server/auth/client-ip.ts`: it assumes exactly one reverse proxy (Dokku's nginx) that sets or appends `X-Forwarded-For`. Another host, CDN or load balancer can change which entry is trustworthy; adapt the code and its tests, then run `scripts/check/ip-rate-limit.mts` against the deployed site.
+- [ ] **Email:** a **verified sending domain** with SPF, DKIM and DMARC; `EMAIL_TRANSPORT=resend` (or another provider) with a sending-only, domain-restricted key; `EMAIL_FROM` on that domain.
+- [ ] **DPAs:** data processing agreements with every processor of user data (hosting, database, email, video provider), per Phase 13's list.
+- [ ] **Privacy review for users under 18** with the organisation's data protection officer: consent, privacy policy wording, retention period for inactive accounts.

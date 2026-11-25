@@ -1,9 +1,9 @@
 /**
- * Post-deploy check (docs/PLAN.md, Phase 3, step F): does the server ignore a
- * client-supplied X-Forwarded-For when rate limiting by IP?
+ * Check for a DEPLOYED instance (docs/PLAN.md, Phase 3): does the server ignore
+ * a client-supplied X-Forwarded-For when rate limiting by IP? Not applicable
+ * to the local setup (no proxy); kept for the real project.
  *
- *   node scripts/check/ip-rate-limit.mts                 # https://14.vibe.smelltuher.is
- *   node scripts/check/ip-rate-limit.mts https://other   # another base URL
+ *   pnpm --silent check:ip-rate-limit https://<deployed-site>   # URL is required
  *
  * Submits the "forgot password" form 11 times, like a browser without
  * JavaScript, each time with:
@@ -21,7 +21,12 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { messageFor } from "../../src/app/_lib/messages.ts";
 
-const base = (process.argv[2] ?? "https://14.vibe.smelltuher.is").replace(/\/+$/, "");
+const target = process.argv[2];
+if (!target) {
+  console.error("Usage: pnpm --silent check:ip-rate-limit https://<deployed-site>");
+  process.exit(1);
+}
+const base = target.replace(/\/+$/, "");
 if (!/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) {
   console.error("Base URL must be https:// (or http://localhost).");
   process.exit(1);

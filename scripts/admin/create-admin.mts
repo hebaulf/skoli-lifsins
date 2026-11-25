@@ -1,12 +1,12 @@
 /**
- * Creates an admin on ONE Neon branch. The ONLY way an admin can exist: the
+ * Creates an admin on the Neon branch. The ONLY way an admin can exist: the
  * app's database role is blocked from creating or promoting admins by a
  * trigger (drizzle/0003_…). Run by a human, never by Claude:
  *
- *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/<dev|demo>-admin-url' \
- *   BETTER_AUTH_SECRET='op://skoli-lifsins/BetterAuth/<dev|demo>-secret' \
+ *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+ *   BETTER_AUTH_SECRET='op://skoli-lifsins/BetterAuth/dev-secret' \
  *   ADMIN_EMAIL='op://skoli-lifsins/Admin/email' \
- *   ADMIN_PASSWORD='op://skoli-lifsins/Admin/<dev|demo>-password' \
+ *   ADMIN_PASSWORD='op://skoli-lifsins/Admin/dev-password' \
  *   op run -- pnpm admin:create
  *
  * Uses Better Auth itself to create the account (same password hashing and

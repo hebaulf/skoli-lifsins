@@ -1,4 +1,4 @@
-// Liveness check for the Docker HEALTHCHECK and Dokku deploy checks.
+// Liveness check for the Docker HEALTHCHECK (and a host's deploy checks).
 // Public on purpose; returns nothing about the app's internals or config.
 export const dynamic = "force-dynamic";
 

@@ -1,9 +1,9 @@
 /**
- * Enables login for the app role (app_runtime) on ONE Neon branch and sets
+ * Enables login for the app role (app_runtime) on the Neon branch and sets
  * its password. Run by a human, never by Claude, with values from 1Password:
  *
- *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/<dev|demo>-admin-url' \
- *   APP_DB_PASSWORD='op://skoli-lifsins/Neon/<dev|demo>-app-password' \
+ *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+ *   APP_DB_PASSWORD='op://skoli-lifsins/Neon/dev-app-password' \
  *   op run -- pnpm db:set-app-password
  *
  * Never prints the password, the statement or the connection string.

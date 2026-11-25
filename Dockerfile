@@ -28,7 +28,7 @@ RUN pnpm install --frozen-lockfile
 
 # ---- 3. Build inputs: dependencies + source (no RUN, no network) ----
 # No secrets here: no ARGs, no env files (excluded by .dockerignore).
-# Server secrets are read at runtime from Dokku config variables.
+# Server secrets are read at runtime from environment variables.
 FROM base AS build-input
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -42,9 +42,8 @@ RUN sh scripts/build-standalone.sh
 # Starts from the clean `node` stage, so the pnpm download and the Corepack
 # shims from `base` never reach this image.
 FROM node AS runner
-# Port 8080: the course Dokku server maps the app to container port 8080
-# (inherited from the original nginx-unprivileged image) and students can't
-# change port mappings. Keep EXPOSE, PORT and the HEALTHCHECK in sync.
+# Port 8080 (originally required by the course server; kept, changing it gains
+# nothing). Keep EXPOSE, PORT and the HEALTHCHECK in sync.
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=8080

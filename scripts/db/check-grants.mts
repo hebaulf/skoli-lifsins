@@ -2,8 +2,8 @@
  * Checks a real Neon branch (step C in docs/PLAN.md, Phase 2). Run by a human,
  * never by Claude, with values from 1Password:
  *
- *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/<dev|demo>-admin-url' \
- *   DATABASE_URL='op://skoli-lifsins/Neon/<dev|demo>-url' \
+ *   ADMIN_DATABASE_URL='op://skoli-lifsins/Neon/dev-admin-url' \
+ *   DATABASE_URL='op://skoli-lifsins/Neon/dev-url' \
  *   op run -- pnpm db:check-grants
  *
  * As the owner: all migrations applied, app_runtime's privileges match the

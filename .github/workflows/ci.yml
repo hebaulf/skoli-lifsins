@@ -120,7 +120,7 @@ jobs:
         run: |
           docker build --target build-input -t skoli-lifsins:build-input .
           docker run --rm --network=none skoli-lifsins:build-input sh scripts/build-standalone.sh
-      - name: Image exposes only port 8080 (course Dokku mapping)
+      - name: Image exposes only port 8080
         run: |
           ports=$(docker image inspect -f '{{json .Config.ExposedPorts}}' skoli-lifsins:ci)
           echo "exposed: $ports"

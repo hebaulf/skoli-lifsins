@@ -10,6 +10,6 @@ try {
   } else {
     console.error("Invalid server environment.");
   }
-  // Fail fast: the container exits and Dokku keeps the previous release running.
+  // Fail fast: the process exits instead of serving with a broken config.
   process.exit(1);
 }

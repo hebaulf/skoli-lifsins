@@ -1,9 +1,9 @@
 import "server-only";
 
 /**
- * Display name for outgoing email. Kept in code, not in EMAIL_FROM: the course
- * Dokku server can't store config values containing spaces, so EMAIL_FROM
- * holds only the bare address.
+ * Display name for outgoing email. Kept in code, not in EMAIL_FROM: config
+ * values may not contain whitespace (src/server/env.ts), so EMAIL_FROM holds
+ * only the bare address.
  */
 export const EMAIL_DISPLAY_NAME = "Skóli lífsins";
 

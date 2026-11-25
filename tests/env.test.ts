@@ -11,7 +11,7 @@ const FAKE_AUTH = {
 };
 const valid = {
   NODE_ENV: "production",
-  APP_BASE_URL: "https://14.vibe.smelltuher.is",
+  APP_BASE_URL: "https://app.example.invalid",
   DATABASE_URL: FAKE_DB_URL,
   ...FAKE_AUTH,
 };
@@ -29,7 +29,7 @@ function problemsOf(source: Record<string, string | undefined>): string[] {
 describe("parseEnv", () => {
   it("accepts a minimal valid production environment", () => {
     const env = parseEnv(valid);
-    expect(env.APP_BASE_URL).toBe("https://14.vibe.smelltuher.is");
+    expect(env.APP_BASE_URL).toBe("https://app.example.invalid");
     expect(env.DATABASE_URL).toBe(FAKE_DB_URL);
   });
 
@@ -96,7 +96,7 @@ describe("parseEnv", () => {
       expect(
         problemsOf({
           ...dev,
-          APP_BASE_URL: "https://14.vibe.smelltuher.is",
+          APP_BASE_URL: "https://app.example.invalid",
           EMAIL_TRANSPORT: "console",
         }),
       ).toEqual([
