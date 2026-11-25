@@ -6,6 +6,7 @@ import { haveIBeenPwned, twoFactor } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
 import type { Db } from "../dal/dal";
 import * as schema from "../db/schema";
+import { redactText, sanitizeLogArgs } from "../log/safe-log";
 import { emails, sendInBackground, type EmailTransport } from "./email";
 import { consumeRateLimits, normaliseEmail } from "./rate-limit";
 
@@ -55,6 +56,19 @@ export function createAuth(deps: AuthDeps) {
     secret,
     database: drizzleAdapter(db, { provider: "pg", schema }),
     telemetry: { enabled: false },
+    // Better Auth's own log output is sanitized like everything else: error
+    // objects become class/code only, text is redacted (no SQL, emails, tokens).
+    logger: {
+      level: "warn",
+      log: (level, message, ...args) => {
+        const line = [
+          `better-auth ${level}: ${redactText(String(message))}`,
+          ...sanitizeLogArgs(args),
+        ];
+        if (level === "error") console.error(...line);
+        else console.warn(...line);
+      },
+    },
     // Our own limiter covers every server action; the only HTTP endpoints we
     // expose are the token-guarded email links (src/app/api/auth/[...all]).
     rateLimit: { enabled: false },

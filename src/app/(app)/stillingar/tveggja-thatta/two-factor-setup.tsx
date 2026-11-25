@@ -25,7 +25,9 @@ export function TwoFactorSetup() {
           <p className="notice notice-error" role="alert">
             {state.status === "rate-limited"
               ? "Of margar tilraunir. Reyndu aftur síðar."
-              : "Rangt lykilorð."}
+              : state.status === "error"
+                ? "Eitthvað fór úrskeiðis. Reyndu aftur eftir smástund."
+                : "Rangt lykilorð."}
           </p>
         )}
         <form action={start} className="form">

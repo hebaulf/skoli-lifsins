@@ -4,8 +4,11 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { contentIdSchema } from "../content/schema";
 import * as schema from "../db/schema";
+import { logSafeError } from "../log/safe-log";
 import {
+  MfaRequiredError,
   NotFoundError,
+  UnauthenticatedError,
   isVerifiedAdmin,
   requireSession,
   requireVerifiedAdmin,
@@ -23,6 +26,50 @@ export class IncompleteAnswerKeyError extends Error {
     super("Answer key incomplete");
     this.name = "IncompleteAnswerKeyError";
   }
+}
+
+/**
+ * An unexpected failure (e.g. a database error) inside the DAL. Carries NO
+ * cause and no details: the original error (whose message can contain SQL
+ * and parameter values) is logged sanitized and then dropped.
+ */
+export class DataAccessError extends Error {
+  constructor() {
+    super("Data access failed");
+    this.name = "DataAccessError";
+  }
+}
+
+export type DalOptions = {
+  /** Called with the operation name and the original error; must log sanitized only. */
+  onUnexpectedError?: (operation: string, error: unknown) => void;
+};
+
+const EXPECTED_ERRORS = [
+  NotFoundError,
+  UnauthenticatedError,
+  MfaRequiredError,
+  IncompleteAnswerKeyError,
+] as const;
+
+/** Wraps every DAL function: expected errors pass, anything else is sanitized. */
+function guardDal<T extends Record<string, (...args: never[]) => Promise<unknown>>>(
+  api: T,
+  report: (operation: string, error: unknown) => void,
+): T {
+  const guarded: Record<string, unknown> = {};
+  for (const [name, fn] of Object.entries(api)) {
+    guarded[name] = async (...args: unknown[]) => {
+      try {
+        return await (fn as (...a: unknown[]) => Promise<unknown>)(...args);
+      } catch (error) {
+        if (EXPECTED_ERRORS.some((expected) => error instanceof expected)) throw error;
+        report(`dal.${name}`, error);
+        throw new DataAccessError();
+      }
+    };
+  }
+  return guarded as T;
 }
 
 // Ids from the client are validated; anything malformed is simply "not found".
@@ -54,7 +101,7 @@ export type Submission = z.infer<typeof submissionSchema>;
  * checks session, role AND ownership before touching data. Other people's
  * data is reported as NotFoundError (404), never as "forbidden".
  */
-export function createDal(db: Db) {
+export function createDal(db: Db, options: DalOptions = {}) {
   /** Group owned by the caller (teacher) or any group (verified admin); else 404. */
   async function loadAccessibleGroup(session: Session, rawGroupId: unknown) {
     const groupId = parseOrNotFound(groupIdSchema, rawGroupId);
@@ -101,7 +148,7 @@ export function createDal(db: Db) {
     throw new NotFoundError();
   }
 
-  return {
+  const api = {
     /** The caller's own account. */
     async getMe(rawSession: Session | null) {
       const session = requireSession(rawSession);
@@ -242,6 +289,7 @@ export function createDal(db: Db) {
       };
     },
   };
+  return guardDal(api, options.onUnexpectedError ?? ((op, error) => logSafeError(op, error)));
 }
 
 export type Dal = ReturnType<typeof createDal>;

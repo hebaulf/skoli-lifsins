@@ -1,9 +1,11 @@
+import { isAPIError } from "better-auth/api";
 import { isPasswordCompromised } from "better-auth/plugins/haveibeenpwned";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../dal/dal";
 import type { Session } from "../dal/session";
 import * as schema from "../db/schema";
+import { logSafeError } from "../log/safe-log";
 import { getClientIp } from "./client-ip";
 import { AUTH_PATHS, signUpRole, type Auth } from "./create-auth";
 import { consumeRateLimits, normaliseEmail, type LimitRule } from "./rate-limit";
@@ -17,7 +19,24 @@ import { consumeRateLimits, normaliseEmail, type LimitRule } from "./rate-limit"
  *   exists (sign-up, sign-in and reset look the same either way),
  * - passes only constant redirect targets to Better Auth.
  */
-export type FlowContext = { auth: Auth; db: Db; secret: string; headers: Headers };
+export type FlowContext = {
+  auth: Auth;
+  db: Db;
+  secret: string;
+  headers: Headers;
+  /** For correlating sanitized log lines (set from the proxy's x-request-id). */
+  requestId?: string;
+};
+
+/**
+ * Logs one sanitized line for UNEXPECTED failures (database errors, internal
+ * errors). Ordinary auth refusals (wrong password, bad token, …) are not
+ * logged. Never logs the error itself (it can contain SQL and emails).
+ */
+function reportIfUnexpected(ctx: FlowContext, operation: string, error: unknown): void {
+  const expected = isAPIError(error) && Number(error.statusCode) < 500;
+  if (!expected) logSafeError(operation, error, ctx.requestId);
+}
 
 export const PASSWORD_MIN = 12;
 export const PASSWORD_MAX = 128;
@@ -98,7 +117,8 @@ export async function signUpFlow(
         headers: ctx.headers,
       }),
     );
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.signUp", error);
     return "error";
   }
   // Same answer for new and existing emails.
@@ -134,7 +154,8 @@ export async function signInFlow(ctx: FlowContext, raw: unknown): Promise<SignIn
     });
     const twoFactor = (response as { twoFactorRedirect?: boolean }).twoFactorRedirect === true;
     return { status: twoFactor ? "two-factor" : "ok", setCookies: setCookiesOf(headers) };
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.signIn", error);
     // Wrong password, unknown email and unverified email all end up here.
     return { status: "invalid" };
   }
@@ -164,7 +185,8 @@ export async function requestResetFlow(
       body: { email: input.data.email, redirectTo: AUTH_PATHS.resetForm },
       headers: ctx.headers,
     });
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.requestReset", error);
     // Same answer either way.
   }
   return "sent";
@@ -190,7 +212,8 @@ export async function resetPasswordFlow(
       headers: ctx.headers,
     });
     return "ok";
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.resetPassword", error);
     return "invalid-link";
   }
 }
@@ -223,7 +246,8 @@ export async function changePasswordFlow(
       headers: ctx.headers,
     });
     return "ok";
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.changePassword", error);
     return "invalid";
   }
 }
@@ -257,7 +281,8 @@ export async function verifyTwoFactorFlow(
         ? await ctx.auth.api.verifyTOTP({ body, headers: ctx.headers, returnHeaders: true })
         : await ctx.auth.api.verifyBackupCode({ body, headers: ctx.headers, returnHeaders: true });
     return { status: "ok", setCookies: setCookiesOf(headers) };
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.verifyTwoFactor", error);
     return { status: "invalid" };
   }
 }
@@ -289,7 +314,8 @@ export async function startTwoFactorSetupFlow(
     if (result.method !== "totp") return { status: "invalid" };
     const secret = new URL(result.totpURI).searchParams.get("secret") ?? "";
     return { status: "ok", secret, totpURI: result.totpURI, backupCodes: result.backupCodes };
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.startTwoFactorSetup", error);
     return { status: "invalid" };
   }
 }
@@ -317,7 +343,8 @@ export async function confirmTwoFactorSetupFlow(
   }
   try {
     await ctx.auth.api.verifyTOTP({ body: { code: input.data.code }, headers: ctx.headers });
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.confirmTwoFactorSetup", error);
     return "invalid";
   }
   await ctx.db.delete(schema.session).where(eq(schema.session.userId, session.userId));
@@ -327,7 +354,8 @@ export async function confirmTwoFactorSetupFlow(
 export async function signOutFlow(ctx: FlowContext): Promise<void> {
   try {
     await ctx.auth.api.signOut({ headers: ctx.headers });
-  } catch {
+  } catch (error) {
+    reportIfUnexpected(ctx, "auth.signOut", error);
     // Already signed out.
   }
 }

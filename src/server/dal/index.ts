@@ -16,9 +16,11 @@ import "server-only";
  * src/server/db/grants.ts. Tests run the DAL under that role.
  */
 import { getDb } from "../db/client";
+import { logSafeError } from "../log/safe-log";
+import { getRequestId } from "../log/request-id";
 import { createDal, type Dal } from "./dal";
 
-export { IncompleteAnswerKeyError, type Dal, type Submission } from "./dal";
+export { DataAccessError, IncompleteAnswerKeyError, type Dal, type Submission } from "./dal";
 export {
   MfaRequiredError,
   NotFoundError,
@@ -30,6 +32,10 @@ export {
 let dal: Dal | undefined;
 
 export function getDal(): Dal {
-  dal ??= createDal(getDb());
+  dal ??= createDal(getDb(), {
+    onUnexpectedError: (operation, error) => {
+      void getRequestId().then((requestId) => logSafeError(operation, error, requestId));
+    },
+  });
   return dal;
 }

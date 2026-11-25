@@ -6,6 +6,7 @@ import { getDb } from "../db/client";
 import * as schema from "../db/schema";
 import type { Role, Session } from "../dal/session";
 import { getEnv } from "../env";
+import { getRequestId } from "../log/request-id";
 import { AUTH_PATHS, createAuth, type Auth } from "./create-auth";
 import { consoleTransport, resendTransport } from "./email";
 import type { FlowContext } from "./flows";
@@ -43,6 +44,7 @@ export async function flowContext(): Promise<FlowContext> {
     db: getDb(),
     secret: getEnv().BETTER_AUTH_SECRET,
     headers: requestHeaders,
+    requestId: await getRequestId(),
   };
 }
 

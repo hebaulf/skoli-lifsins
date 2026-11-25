@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { flowContext, requireUser } from "@/server/auth";
 import {
   changePasswordFlow,
@@ -14,6 +14,8 @@ import {
   verifyTwoFactorFlow,
   type StartTwoFactorResult,
 } from "@/server/auth/flows";
+import { getRequestId } from "@/server/log/request-id";
+import { logSafeError } from "@/server/log/safe-log";
 
 /**
  * Auth server actions. Thin wrappers: all logic, validation and rate limiting
@@ -21,6 +23,10 @@ import {
  * codes in the URL (never reflected text). Public actions are listed in
  * src/server/auth/public-routes.ts; all others call requireUser().
  * Cookies are set by Better Auth's nextCookies() plugin.
+ *
+ * Every action body runs inside guarded(): unexpected errors (e.g. database
+ * errors from the rate limiter) are logged as ONE sanitized line and the user
+ * gets the generic Icelandic error message. Never the error itself.
  */
 
 const field = (form: FormData, name: string) => {
@@ -28,25 +34,39 @@ const field = (form: FormData, name: string) => {
   return typeof value === "string" ? value : "";
 };
 
+async function guarded(operation: string, errorPath: string, body: () => Promise<void>) {
+  try {
+    await body();
+  } catch (error) {
+    unstable_rethrow(error); // let Next.js redirects / notFound through
+    logSafeError(operation, error, await getRequestId());
+    redirect(errorPath);
+  }
+}
+
 // ---- public ----------------------------------------------------------------
 
 export async function signInAction(form: FormData) {
-  const result = await signInFlow(await flowContext(), {
-    email: field(form, "email"),
-    password: field(form, "password"),
+  await guarded("action.signIn", "/innskraning?villa=error", async () => {
+    const result = await signInFlow(await flowContext(), {
+      email: field(form, "email"),
+      password: field(form, "password"),
+    });
+    if (result.status === "ok") redirect("/heim");
+    if (result.status === "two-factor") redirect("/tveggja-thatta");
+    redirect(`/innskraning?villa=${result.status}`);
   });
-  if (result.status === "ok") redirect("/heim");
-  if (result.status === "two-factor") redirect("/tveggja-thatta");
-  redirect(`/innskraning?villa=${result.status}`);
 }
 
 async function signUp(role: "student" | "teacher", path: string, form: FormData) {
-  const result = await signUpFlow(await flowContext(), role, {
-    name: field(form, "name"),
-    email: field(form, "email"),
-    password: field(form, "password"),
+  await guarded(`action.signUp.${role}`, `${path}?stada=error`, async () => {
+    const result = await signUpFlow(await flowContext(), role, {
+      name: field(form, "name"),
+      email: field(form, "email"),
+      password: field(form, "password"),
+    });
+    redirect(`${path}?stada=${result}`);
   });
-  redirect(`${path}?stada=${result}`);
 }
 
 export async function signUpStudentAction(form: FormData) {
@@ -58,66 +78,88 @@ export async function signUpTeacherAction(form: FormData) {
 }
 
 export async function requestResetAction(form: FormData) {
-  const result = await requestResetFlow(await flowContext(), { email: field(form, "email") });
-  redirect(`/gleymt-lykilord?stada=${result}`);
+  await guarded("action.requestReset", "/gleymt-lykilord?stada=error", async () => {
+    const result = await requestResetFlow(await flowContext(), { email: field(form, "email") });
+    redirect(`/gleymt-lykilord?stada=${result}`);
+  });
 }
 
 export async function resetPasswordAction(form: FormData) {
-  const token = field(form, "token");
-  const result = await resetPasswordFlow(await flowContext(), {
-    token,
-    password: field(form, "password"),
+  await guarded("action.resetPassword", "/endurstilla-lykilord?villa=error", async () => {
+    const token = field(form, "token");
+    const result = await resetPasswordFlow(await flowContext(), {
+      token,
+      password: field(form, "password"),
+    });
+    if (result === "ok") redirect("/innskraning?stada=nytt-lykilord");
+    const tokenParam = /^[A-Za-z0-9_-]{1,256}$/.test(token) ? `&token=${token}` : "";
+    redirect(`/endurstilla-lykilord?villa=${result}${tokenParam}`);
   });
-  if (result === "ok") redirect("/innskraning?stada=nytt-lykilord");
-  const tokenParam = /^[A-Za-z0-9_-]{1,256}$/.test(token) ? `&token=${token}` : "";
-  redirect(`/endurstilla-lykilord?villa=${result}${tokenParam}`);
 }
 
 export async function verifyTwoFactorAction(form: FormData) {
-  const kind = field(form, "kind") === "backup" ? "backup" : "totp";
-  const result = await verifyTwoFactorFlow(await flowContext(), {
-    kind,
-    code: field(form, "code").replace(/\s+/g, ""),
+  await guarded("action.verifyTwoFactor", "/tveggja-thatta?villa=error", async () => {
+    const kind = field(form, "kind") === "backup" ? "backup" : "totp";
+    const result = await verifyTwoFactorFlow(await flowContext(), {
+      kind,
+      code: field(form, "code").replace(/\s+/g, ""),
+    });
+    if (result.status === "ok") redirect("/heim");
+    redirect(`/tveggja-thatta?villa=${result.status}`);
   });
-  if (result.status === "ok") redirect("/heim");
-  redirect(`/tveggja-thatta?villa=${result.status}`);
 }
 
 export async function signOutAction() {
-  await signOutFlow(await flowContext());
-  redirect("/innskraning?stada=utskrad");
+  await guarded("action.signOut", "/innskraning", async () => {
+    await signOutFlow(await flowContext());
+    redirect("/innskraning?stada=utskrad");
+  });
 }
 
 // ---- protected (requireUser) -------------------------------------------------
 
 export async function changePasswordAction(form: FormData) {
-  const session = await requireUser();
-  const result = await changePasswordFlow(await flowContext(), session, {
-    current: field(form, "current"),
-    next: field(form, "next"),
+  await guarded("action.changePassword", "/stillingar?stada=error", async () => {
+    const session = await requireUser();
+    const result = await changePasswordFlow(await flowContext(), session, {
+      current: field(form, "current"),
+      next: field(form, "next"),
+    });
+    redirect(`/stillingar?stada=${result}`);
   });
-  redirect(`/stillingar?stada=${result}`);
 }
 
-export type TwoFactorSetupState = { step: "start" } | StartTwoFactorResult;
+export type TwoFactorSetupState = { step: "start" } | StartTwoFactorResult | { status: "error" };
 
 /** Step 1 of TOTP setup. Returns the secret and backup codes to show ONCE. */
 export async function startTwoFactorSetupAction(
   _previous: TwoFactorSetupState,
   form: FormData,
 ): Promise<TwoFactorSetupState> {
-  const session = await requireUser({ allowAdminWithoutMfa: true });
-  return startTwoFactorSetupFlow(await flowContext(), session, {
-    password: field(form, "password"),
-  });
+  try {
+    const session = await requireUser({ allowAdminWithoutMfa: true });
+    return await startTwoFactorSetupFlow(await flowContext(), session, {
+      password: field(form, "password"),
+    });
+  } catch (error) {
+    unstable_rethrow(error);
+    logSafeError("action.startTwoFactorSetup", error, await getRequestId());
+    return { status: "error" };
+  }
 }
 
 /** Step 2: confirm with a code. Signs out everywhere; sign in again with 2FA. */
 export async function confirmTwoFactorSetupAction(form: FormData) {
-  const session = await requireUser({ allowAdminWithoutMfa: true });
-  const result = await confirmTwoFactorSetupFlow(await flowContext(), session, {
-    code: field(form, "code").replace(/\s+/g, ""),
-  });
-  if (result === "ok") redirect("/innskraning?stada=2fa-virkt");
-  redirect(`/stillingar/tveggja-thatta?villa=${result}`);
+  await guarded(
+    "action.confirmTwoFactorSetup",
+    "/stillingar/tveggja-thatta?villa=error",
+    async () => {
+      const session = await requireUser({ allowAdminWithoutMfa: true });
+      const result = await confirmTwoFactorSetupFlow(await flowContext(), session, {
+        code: field(form, "code").replace(/\s+/g, ""),
+      });
+      if (result === "ok") redirect("/innskraning?stada=2fa-virkt");
+      redirect(`/stillingar/tveggja-thatta?villa=${result}`);
+    },
+  );
 }
